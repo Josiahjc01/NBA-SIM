@@ -105,6 +105,7 @@ class SimSummary:
     away_win_lo: float = 0.0
     away_win_hi: float = 1.0
     seed: int | None = None
+    mean_margin: float = 0.0  # home − away
 
 
 @dataclass
