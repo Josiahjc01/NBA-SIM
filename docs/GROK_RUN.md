@@ -1,6 +1,6 @@
 # Grok Bot — run NBA Sim (live 2026-27)
 
-This package defaults to **live 2026-27** season-to-date rosters and stats from `stats.nba.com` via `nba_api`, with **last-season (2025-26) fallback** when a team has fewer than 5 usable current-season players. Do **not** use `--fixtures` unless you only need an offline smoke test.
+This package defaults to **live 2026-27** priors from `stats.nba.com` via `nba_api`, **blended for the beginning of the season**: last-season (2025-26) rates + current **preseason** + growing regular S2D, with **rookie expected production** (by position) mixed with preseason for first-year players. Do **not** use `--fixtures` unless you only need an offline smoke test.
 
 ## What Grok needs
 
@@ -52,8 +52,8 @@ Expected log lines on success:
 
 - `Loading LIVE priors ... (season 2026-27, ...)`
 - `fetching live NBA Stats for season 2026-27 ...`
-- `fetching fallback season 2025-26 priors ...` (when fallback enabled)
-- `prior: ...` provenance lines
+- `fetching last season 2025-26 priors ...` and `fetching 2026-27 Pre Season ...`
+- `prior: ...` provenance lines with blend weights / rookies
 - Team Win% + avg scores + player tables (or slate compact table)
 
 If live fetch fails, the CLI **errors** (no silent fixture swap). Fix network / retry. Only then consider `--fixtures` for debugging the sim engine itself.
@@ -70,7 +70,7 @@ python -m nba_sim --slate-date 2026-10-22 --fixtures --n 20
 
 - `--date YYYY-MM-DD` / slate date → priors through **D−1** only (pre-tip; no that-game box score).
 - Slate “today” = **US/Eastern** calendar date.
-- Fallback threshold: ≥5 usable players (`GP≥1`, `MIN≥1`); else fill from previous season. Documented in output.
+- Early-season blend: last season + preseason + rookie archetypes; shrinks toward regular S2D with GP. If still &lt;5 usable → whole-team last-season fill. Documented in output.
 - Default season constant: `2026-27` (`nba_sim.season.CURRENT_SEASON`).
 - Cache: `.cache/` (safe to delete; TTL ~6h).
 - Repo: https://github.com/Josiahjc01/NBA-SIM

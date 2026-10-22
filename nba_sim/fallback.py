@@ -1,33 +1,32 @@
-"""Last-season prior fallback thresholds and helpers.
+"""Last-season / early-season prior helpers and provenance reporting.
 
-When the current season (default 2026-27) does not yet have enough usable
-player priors for a team, we fill missing players — or the whole rotation —
-from the previous season (e.g. 2025-26). Same-game box scores are never used.
+At the beginning of the season, player priors are a **blend** of last season,
+preseason, current regular-season S2D, and (for rookies) expected production.
+Same-game box scores are never used.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from nba_sim.season import previous_season
 
-# Minimum usable current-season players before we treat the team as thin
-# and fill from last season (individual gaps first; whole-team if still short).
+# Minimum usable blended players before whole-team last-season fill.
 MIN_USABLE_PLAYERS = 5
 
-# A player prior counts as usable when both thresholds are met.
-USABLE_MIN_THRESHOLD = 1.0  # per-game minutes
-USABLE_GP_THRESHOLD = 1.0  # games played
+# A player prior counts as usable when both thresholds are met (after blend).
+USABLE_MIN_THRESHOLD = 1.0  # minutes
+USABLE_GP_THRESHOLD = 1.0  # games (from any component / blended gp)
 
 
 @dataclass
 class PriorProvenance:
-    """Documents which season each player's priors came from."""
+    """Documents which sources each player's blended priors used."""
 
     season_primary: str
     season_fallback: str
     players: list[dict] = field(default_factory=list)
-    # e.g. "filled 3 roster gaps from 2025-26" / "whole-team fallback"
     team_notes: dict[str, str] = field(default_factory=dict)
 
     def record_player(
@@ -38,37 +37,67 @@ class PriorProvenance:
         name: str,
         season_used: str,
         reason: str,
+        weights: dict[str, float] | None = None,
+        is_rookie: bool = False,
     ) -> None:
-        self.players.append(
-            {
-                "team": team_abbr,
-                "player_id": player_id,
-                "name": name,
-                "season": season_used,
-                "reason": reason,
-            }
-        )
+        entry: dict[str, Any] = {
+            "team": team_abbr,
+            "player_id": player_id,
+            "name": name,
+            "season": season_used,
+            "reason": reason,
+            "is_rookie": is_rookie,
+        }
+        if weights:
+            entry["weights"] = weights
+        self.players.append(entry)
 
     def summary_lines(self) -> list[str]:
         lines = [
             f"Primary season {self.season_primary}; "
-            f"fallback season {self.season_fallback} "
-            f"(need ≥{MIN_USABLE_PLAYERS} usable players with "
+            f"last-season blend source {self.season_fallback}; "
+            f"preseason + rookie expected production integrated. "
+            f"(need ≥{MIN_USABLE_PLAYERS} usable with "
             f"GP≥{USABLE_GP_THRESHOLD:g} and MIN≥{USABLE_MIN_THRESHOLD:g})."
         ]
         for abbr, note in sorted(self.team_notes.items()):
             lines.append(f"  {abbr}: {note}")
-        by_season: dict[str, list[str]] = {}
+
+        rookies = [p for p in self.players if p.get("is_rookie")]
+        if rookies:
+            lines.append(f"  Rookies with expected-production blend ({len(rookies)}):")
+            for p in rookies[:20]:
+                w = p.get("weights") or {}
+                wtxt = (
+                    f" reg={w.get('reg', 0):.2f} last={w.get('last', 0):.2f} "
+                    f"pre={w.get('pre', 0):.2f} rook={w.get('rookie', 0):.2f}"
+                    if w
+                    else ""
+                )
+                lines.append(f"    - {p['team']} {p['name']} ({p['reason']}){wtxt}")
+            if len(rookies) > 20:
+                lines.append(f"    ... +{len(rookies) - 20} more")
+
+        # Group non-rookie by dominant source reason prefix
+        by_reason: dict[str, list[str]] = {}
         for p in self.players:
-            by_season.setdefault(p["season"], []).append(
-                f"{p['team']} {p['name']} ({p['reason']})"
-            )
-        for season, names in sorted(by_season.items()):
-            lines.append(f"  Season {season} priors ({len(names)}):")
-            for n in names[:40]:
+            if p.get("is_rookie"):
+                continue
+            key = str(p.get("reason") or p.get("season") or "?")
+            w = p.get("weights") or {}
+            detail = ""
+            if w:
+                detail = (
+                    f" [reg={w.get('reg', 0):.2f} last={w.get('last', 0):.2f} "
+                    f"pre={w.get('pre', 0):.2f}]"
+                )
+            by_reason.setdefault(key, []).append(f"{p['team']} {p['name']}{detail}")
+        for reason, names in sorted(by_reason.items()):
+            lines.append(f"  {reason} ({len(names)}):")
+            for n in names[:25]:
                 lines.append(f"    - {n}")
-            if len(names) > 40:
-                lines.append(f"    ... +{len(names) - 40} more")
+            if len(names) > 25:
+                lines.append(f"    ... +{len(names) - 25} more")
         return lines
 
 

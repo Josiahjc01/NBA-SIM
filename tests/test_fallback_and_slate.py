@@ -138,6 +138,7 @@ class BuildTeamFallbackTests(unittest.TestCase):
             fallback_teams=team_rows,
             roster_ids={1, 2, 3, 4, 5, 6, 7, 8},
             provenance=prov,
+            allow_blend=False,  # hard fill path (blend covered in test_early_season_priors)
         )
         self.assertGreaterEqual(len(built.players), MIN_USABLE_PLAYERS)
         seasons = {p.prior_season for p in built.players}

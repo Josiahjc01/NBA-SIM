@@ -49,13 +49,22 @@ python -m nba_sim --slate-date 2026-10-22 --lines-csv lines.csv --n 2000
 
 Compact table columns: matchup, avg scores, mean total, win%, optional cover%/over%.
 
-### Last-season fallback
+### Beginning-of-season priors (last season + preseason + rookies)
 
-- **Primary:** current season (`2026-27` by default), DateTo = day before tip when `--date` / slate date is set.
-- **Threshold:** a team needs ≥ **5** usable players (`GP ≥ 1` and `MIN ≥ 1`).
-- **Fill:** roster players missing/thin current priors get **2025-26** rates; if still short, whole-team fill from last season (including team pace/ORtg/DRtg when needed).
-- **Documented:** report prints which season each player used and team-level notes.
-- **Never** uses same-game box scores. Disable with `--no-fallback`.
+Oriented for tip-off / early **2026-27**:
+
+| Source | Who | Role |
+|--------|-----|------|
+| Last season (`2025-26`) | Veterans | Strong prior (`K_LAST≈25` games of evidence) |
+| Preseason (`Pre Season`) | Everyone with pre games | Integrated weak signal (`K_PRE≈6`) |
+| Current regular S2D | Everyone | Grows with GP (shrinks toward live form) |
+| Rookie expected production | EXP=`R` / no NBA last season | Position archetype (G/F/C) blended with preseason |
+
+- Current regular DateTo = day before tip when `--date` / slate date is set (no same-game leak).
+- Preseason + last season use full available dashboards (never tip-game boxes).
+- If a team still has &lt; **5** usable players after blend → whole-team last-season fill.
+- Report prints blend weights (reg/last/pre/rookie) and rookie notes.
+- Disable the whole blend stack with `--no-fallback` (current regular only).
 
 ### Injuries & betting lines (v1)
 

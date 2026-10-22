@@ -6,7 +6,7 @@ A CLI Monte Carlo basketball simulator. Given a matchup (or a full-day slate), i
 ## Scope (v1+)
 - Python CLI only (`python -m nba_sim` or `simulate.py`)
 - **Default:** live **2026-27** season-to-date via `nba_api` → `stats.nba.com`, with on-disk cache
-- **Last-season fallback** when &lt;5 usable current-season players (documented in output)
+- **Beginning-of-season blend**: last season + preseason + rookie expected production → shrink toward regular S2D; whole-team last-season fill if still &lt;5 usable
 - **Full-day slate** via `--slate` / `--slate-date` (US/Eastern)
 - Optional injuries (ESPN or CSV) and betting lines (flags / CSV) — probability math wired; no live odds feed
 - Fixtures only with explicit `--fixtures` (outdated smoke data)

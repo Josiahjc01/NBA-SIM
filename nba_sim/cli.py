@@ -64,7 +64,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--no-fallback",
         action="store_true",
-        help="Disable previous-season prior fill (current season only).",
+        help=(
+            "Disable early-season blend (last season + preseason + rookie "
+            "expected production). Current regular season only."
+        ),
     )
     p.add_argument(
         "--fixtures",

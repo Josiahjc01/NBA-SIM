@@ -8,7 +8,8 @@ Concrete pass for data leaks, bias, and accounting inconsistencies. Findings bel
 |-------|--------|------------|
 | Using final box / winner of the requested game | **Pass** | No game-result or box-score endpoints feed the model. Slate uses `ScoreboardV2` for **matchup pairing only**. |
 | `--date` / slate date includes same-day games | **Pass** | `prior_cutoff(game_date) = game_date − 1 day`. LeagueDash `date_to_nullable` set for **current** season. |
-| Last-season fallback leak | **Pass** | Fallback uses full **previous** season dashboards only — never the tip game’s box. |
+| Last-season / preseason blend leak | **Pass** | Last season = full prior regular season; preseason = current `Pre Season` dash only; current regular uses DateTo=tip−1. Never tip-game boxes. |
+| Rookie priors | **Pass (model)** | Position archetype + preseason blend; not opponent scouting reports or same-game stats. |
 | Cache key includes as-of + fallback | **Pass** | Cache key embeds season, fallback flag, teams, `asof_*`. |
 | Fixture path | **Pass (opt-in only)** | `--fixtures` uses bundled JSON bannered as outdated / not 2026-27. **No silent fallback** on live failure. |
 
@@ -22,7 +23,7 @@ Concrete pass for data leaks, bias, and accounting inconsistencies. Findings bel
 | Pace double-count | **Fixed** | Game possessions = `avg(home.pace, away.pace) + noise` once. Player averages inform **shares**. |
 | Opponent adjustment | **Once** | FG% / 3P% scaled by `league_def / opp_def` clipped to `[0.94, 1.06]`. |
 | Equal minutes / equal usage | **Avoided** | Rotation = top 8–10 by MIN (post-injury). Minutes ∝ season MIN → **240**. Usage ∝ `FGA × √MIN`. |
-| Last-season fill | **Documented** | Early-season teams may lean on 2025-26 rates; provenance printed every run. |
+| Early-season blend | **Documented** | GP-weighted mix of last season / preseason / S2D / rookie archetype; provenance + weights printed every run. |
 
 ## 3. Inconsistencies
 
@@ -41,7 +42,8 @@ Concrete pass for data leaks, bias, and accounting inconsistencies. Findings bel
 - No explicit lineup stints; minutes are season-share scaled.
 - Defense is team DRtg shrink only.
 - Free-throw foul model is a flat rate on 2PT attempts.
-- Early season heavily uses last-season fallback by design (threshold: 5 usable current players).
+- Early season heavily weights last season + preseason by design; rookies use position expected production until S2D accumulates.
+- Rookie archetypes are generic (not draft-slot / college translation models) — improve later if needed.
 
 ## 5. Audit hooks in runtime
 

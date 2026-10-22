@@ -24,6 +24,15 @@ from nba_sim.fallback import (
     fallback_season_for,
     is_usable_player,
 )
+from nba_sim.priors import (
+    BlendWeights,
+    RosterMeta,
+    blend_rate_rows,
+    blend_team_advanced,
+    compute_blend_weights,
+    parse_roster_meta,
+    rookie_prior_row,
+)
 from nba_sim.season import CURRENT_SEASON
 
 CACHE_DIR = Path(__file__).resolve().parents[1] / ".cache"
@@ -56,11 +65,14 @@ class PlayerSeason:
     fg3_pct: float = 0.0
     fta: float = 0.0
     ft_pct: float = 0.75
-    # Which season label the rate priors were taken from (current or fallback).
+    # Which season / blend label the rate priors were taken from.
     prior_season: str = ""
     # Injury adjustment applied after fetch (1.0 = full; 0 = out).
     injury_mult: float = 1.0
     injury_status: str = ""
+    # Serialized blend weights (reg/last/pre/rookie) when applicable.
+    blend_weights: dict = field(default_factory=dict)
+    is_rookie: bool = False
 
 
 @dataclass
@@ -160,25 +172,36 @@ def _with_retries(label: str, fn):
     raise RuntimeError(f"{label} failed after {API_RETRIES} tries: {last}")
 
 
-def _fetch_league_player_stats(season: str, date_to: str | None) -> list[dict[str, Any]]:
+def _fetch_league_player_stats(
+    season: str,
+    date_to: str | None,
+    *,
+    season_type: str = "Regular Season",
+) -> list[dict[str, Any]]:
     from nba_api.stats.endpoints import leaguedashplayerstats
 
     def call():
         kwargs: dict[str, Any] = {
             "season": season,
             "per_mode_detailed": "PerGame",
-            "season_type_all_star": "Regular Season",
+            "season_type_all_star": season_type,
             "timeout": API_TIMEOUT,
         }
-        if date_to:
+        # DateTo only for regular season (preseason is short; use full pre slate).
+        if date_to and season_type == "Regular Season":
             kwargs["date_to_nullable"] = date_to
         ep = leaguedashplayerstats.LeagueDashPlayerStats(**kwargs)
         return ep.get_normalized_dict()["LeagueDashPlayerStats"]
 
-    return _with_retries(f"LeagueDashPlayerStats({season})", call)
+    return _with_retries(f"LeagueDashPlayerStats({season},{season_type})", call)
 
 
-def _fetch_league_team_stats(season: str, date_to: str | None) -> list[dict[str, Any]]:
+def _fetch_league_team_stats(
+    season: str,
+    date_to: str | None,
+    *,
+    season_type: str = "Regular Season",
+) -> list[dict[str, Any]]:
     from nba_api.stats.endpoints import leaguedashteamstats
 
     def call():
@@ -186,15 +209,15 @@ def _fetch_league_team_stats(season: str, date_to: str | None) -> list[dict[str,
             "season": season,
             "per_mode_detailed": "PerGame",
             "measure_type_detailed_defense": "Advanced",
-            "season_type_all_star": "Regular Season",
+            "season_type_all_star": season_type,
             "timeout": API_TIMEOUT,
         }
-        if date_to:
+        if date_to and season_type == "Regular Season":
             kwargs["date_to_nullable"] = date_to
         ep = leaguedashteamstats.LeagueDashTeamStats(**kwargs)
         return ep.get_normalized_dict()["LeagueDashTeamStats"]
 
-    return _with_retries(f"LeagueDashTeamStats({season})", call)
+    return _with_retries(f"LeagueDashTeamStats({season},{season_type})", call)
 
 
 def _fetch_roster(team_id: int, season: str) -> list[dict[str, Any]]:
@@ -254,6 +277,47 @@ def _player_from_row(
     )
 
 
+def _player_from_blended_rates(
+    *,
+    player_id: int,
+    name: str,
+    team_id: int,
+    team_abbr: str,
+    rates: dict[str, float],
+    prior_label: str,
+    weights: BlendWeights,
+    is_rookie: bool,
+) -> PlayerSeason:
+    ft_pct = rates.get("ft_pct", 0.75) or 0.75
+    if ft_pct <= 0:
+        ft_pct = 0.75
+    return PlayerSeason(
+        player_id=player_id,
+        name=name,
+        team_id=team_id,
+        team_abbr=team_abbr,
+        gp=float(rates.get("gp", 0.0)),
+        min=float(rates.get("min", 0.0)),
+        pts=float(rates.get("pts", 0.0)),
+        reb=float(rates.get("reb", 0.0)),
+        oreb=float(rates.get("oreb", 0.0)),
+        dreb=float(rates.get("dreb", 0.0)),
+        ast=float(rates.get("ast", 0.0)),
+        tov=float(rates.get("tov", 0.0)),
+        fga=float(rates.get("fga", 0.0)),
+        fgm=float(rates.get("fgm", 0.0)),
+        fg_pct=float(rates.get("fg_pct", 0.0)),
+        fg3a=float(rates.get("fg3a", 0.0)),
+        fg3m=float(rates.get("fg3m", 0.0)),
+        fg3_pct=float(rates.get("fg3_pct", 0.0)),
+        fta=float(rates.get("fta", 0.0)),
+        ft_pct=float(ft_pct),
+        prior_season=prior_label,
+        blend_weights=weights.as_dict(),
+        is_rookie=is_rookie,
+    )
+
+
 def _clip_player_rates(p: PlayerSeason) -> PlayerSeason:
     p.pts = float(min(45.0, max(0.0, p.pts)))
     p.reb = float(min(20.0, max(0.0, p.reb)))
@@ -303,6 +367,12 @@ def _index_players_league(
     return out
 
 
+def _row_usable(row: dict[str, Any] | None) -> bool:
+    if row is None:
+        return False
+    return is_usable_player(_f(row, "GP"), _f(row, "MIN"))
+
+
 def _build_team_with_fallback(
     team: dict[str, Any],
     *,
@@ -314,22 +384,51 @@ def _build_team_with_fallback(
     fallback_teams: list[dict[str, Any]] | None,
     roster_ids: set[int] | None,
     provenance: PriorProvenance,
+    preseason_players: list[dict[str, Any]] | None = None,
+    roster_meta: dict[int, RosterMeta] | None = None,
+    allow_blend: bool = True,
 ) -> TeamSeason:
+    """
+    Build team priors with beginning-of-season blending:
+
+    - Veterans: last season + preseason + current regular S2D (GP-weighted)
+    - Rookies: position expected production + preseason (+ any early S2D)
+    - If still < MIN_USABLE_PLAYERS after blend → whole-team last-season fill
+    """
     abbr = team["abbreviation"]
     tid = int(team["id"])
+    roster_meta = roster_meta or {}
 
-    pace, ortg, drtg = _team_advanced(tid, primary_teams)
-    team_stats_season = primary_season
-    # If current-season advanced row is still defaults and fallback exists, prefer fallback.
-    if fallback_teams is not None:
-        has_primary = any(int(tr.get("TEAM_ID", 0)) == tid for tr in primary_teams)
-        if not has_primary:
-            pace, ortg, drtg = _team_advanced(tid, fallback_teams)
-            team_stats_season = fallback_season
-            provenance.team_notes[abbr] = (
-                provenance.team_notes.get(abbr, "")
-                + f" team advanced from {fallback_season};"
-            ).strip()
+    # Team advanced: blend current vs last by team GP
+    primary_adv = None
+    if any(int(tr.get("TEAM_ID", 0)) == tid for tr in primary_teams):
+        primary_adv = _team_advanced(tid, primary_teams)
+    last_adv = None
+    if fallback_teams is not None and any(
+        int(tr.get("TEAM_ID", 0)) == tid for tr in fallback_teams
+    ):
+        last_adv = _team_advanced(tid, fallback_teams)
+
+    # Approximate team GP from max player GP on current dash
+    team_gp = 0.0
+    for row in primary_players:
+        if int(row.get("TEAM_ID", 0)) == tid:
+            team_gp = max(team_gp, _f(row, "GP"))
+
+    if allow_blend:
+        pace, ortg, drtg, adv_label = blend_team_advanced(
+            primary=primary_adv, last=last_adv, gp_reg=team_gp
+        )
+        team_stats_season = f"{primary_season}|{adv_label}"
+    elif primary_adv is not None:
+        pace, ortg, drtg = primary_adv
+        team_stats_season = primary_season
+    elif last_adv is not None:
+        pace, ortg, drtg = last_adv
+        team_stats_season = fallback_season
+    else:
+        pace, ortg, drtg = 100.0, 112.0, 112.0
+        team_stats_season = primary_season
 
     by_id_primary = _index_players_by_id(primary_players, tid)
     by_id_fallback_team = (
@@ -338,47 +437,177 @@ def _build_team_with_fallback(
     by_id_fallback_league = (
         _index_players_league(fallback_players) if fallback_players else {}
     )
+    by_id_pre_team = (
+        _index_players_by_id(preseason_players, tid) if preseason_players else {}
+    )
+    by_id_pre_league = (
+        _index_players_league(preseason_players) if preseason_players else {}
+    )
 
-    # Candidate player ids: roster if available, else anyone on team dash.
     candidate_ids: set[int]
     if roster_ids is not None:
         candidate_ids = set(roster_ids)
-        # Also include current-season dash players with meaningful minutes
         for pid, row in by_id_primary.items():
             if _f(row, "MIN") >= 5:
                 candidate_ids.add(pid)
     else:
-        candidate_ids = set(by_id_primary.keys())
+        candidate_ids = set(by_id_primary.keys()) | set(by_id_fallback_team.keys())
+        candidate_ids |= set(by_id_pre_team.keys())
 
     players: list[PlayerSeason] = []
-    current_usable = 0
+    n_rookie = 0
+    n_with_pre = 0
+    n_with_last = 0
 
     for pid in candidate_ids:
-        row = by_id_primary.get(pid)
+        meta = roster_meta.get(pid)
+        name = (
+            (meta.name if meta else None)
+            or (
+                str(by_id_primary[pid].get("PLAYER_NAME"))
+                if pid in by_id_primary
+                else None
+            )
+            or (
+                str(by_id_fallback_league[pid].get("PLAYER_NAME"))
+                if pid in by_id_fallback_league
+                else None
+            )
+            or f"Player {pid}"
+        )
+        position = meta.position if meta else "F"
+        is_rookie = bool(meta.is_rookie) if meta else False
+
+        reg_row = by_id_primary.get(pid)
+        last_row = by_id_fallback_team.get(pid) or by_id_fallback_league.get(pid)
+        pre_row = by_id_pre_team.get(pid) or by_id_pre_league.get(pid)
+
+        has_last = _row_usable(last_row)
+        # Infer rookie if roster says so OR no last-season NBA history and young name on roster
+        if meta is None and not has_last and reg_row is None:
+            # Unknown history — only apply rookie prior if we have position from nowhere;
+            # skip pure phantoms without any row
+            if pre_row is None:
+                continue
+
+        if not has_last and meta and meta.is_rookie:
+            is_rookie = True
+        elif not has_last and meta is None and last_row is None:
+            # No last season row at all → treat as rookie-like for prior purposes
+            # when on current roster
+            if roster_ids is not None and pid in roster_ids:
+                is_rookie = True
+
+        gp_reg = _f(reg_row, "GP") if reg_row else 0.0
+        gp_pre = _f(pre_row, "GP") if pre_row else 0.0
+
+        rook_row = None
+        if is_rookie or (not has_last and (roster_ids is None or pid in (roster_ids or set()))):
+            if not has_last:
+                is_rookie = is_rookie or (meta.is_rookie if meta else True)
+                rook_row = rookie_prior_row(position, player_id=pid, name=name)
+
+        if allow_blend:
+            weights = compute_blend_weights(
+                gp_reg=gp_reg,
+                gp_pre=gp_pre,
+                has_last=has_last,
+                is_rookie=is_rookie and not has_last,
+            )
+            # Need at least one component
+            if (
+                weights.reg <= 0
+                and weights.last <= 0
+                and weights.pre <= 0
+                and weights.rookie <= 0
+            ):
+                continue
+            if weights.reg > 0 and reg_row is None:
+                weights = BlendWeights(
+                    reg=0.0,
+                    last=weights.last,
+                    pre=weights.pre,
+                    rookie=weights.rookie,
+                )
+                s = weights.last + weights.pre + weights.rookie
+                if s <= 0:
+                    continue
+                weights = BlendWeights(
+                    reg=0.0,
+                    last=weights.last / s,
+                    pre=weights.pre / s,
+                    rookie=weights.rookie / s,
+                )
+            rates = blend_rate_rows(
+                reg=reg_row if weights.reg > 0 else None,
+                last=last_row if weights.last > 0 else None,
+                pre=pre_row if weights.pre > 0 else None,
+                rookie=rook_row if weights.rookie > 0 else None,
+                weights=weights,
+            )
+            # Soft roster filter for non-roster low-minute bodies
+            if (
+                roster_ids is not None
+                and pid not in roster_ids
+                and rates.get("min", 0) < 5
+            ):
+                continue
+            if rates.get("min", 0) < 1.0 and rates.get("gp", 0) < 1:
+                # Allow rookie archetype alone (has synthetic gp/min)
+                if weights.rookie <= 0:
+                    continue
+
+            prior_label = weights.label()
+            reason = "early-season-blend"
+            if is_rookie and not has_last:
+                reason = "rookie+preseason-blend" if weights.pre > 0 else "rookie-expected"
+                n_rookie += 1
+            if weights.pre > 0:
+                n_with_pre += 1
+            if weights.last > 0:
+                n_with_last += 1
+
+            p = _clip_player_rates(
+                _player_from_blended_rates(
+                    player_id=pid,
+                    name=name,
+                    team_id=tid,
+                    team_abbr=abbr,
+                    rates=rates,
+                    prior_label=prior_label,
+                    weights=weights,
+                    is_rookie=is_rookie and not has_last,
+                )
+            )
+            players.append(p)
+            provenance.record_player(
+                team_abbr=abbr,
+                player_id=pid,
+                name=name,
+                season_used=prior_label,
+                reason=reason,
+                weights=weights.as_dict(),
+                is_rookie=p.is_rookie,
+            )
+            continue
+
+        # --- non-blend legacy path (allow_blend=False / --no-fallback style) ---
+        row = reg_row
         season_used = primary_season
         reason = "current-season"
-        if row is not None and is_usable_player(_f(row, "GP"), _f(row, "MIN")):
-            current_usable += 1
+        if row is not None and _row_usable(row):
+            pass
         else:
-            # Missing or thin current-season prior → try last season
-            fb = by_id_fallback_team.get(pid) or by_id_fallback_league.get(pid)
-            if fb is not None and is_usable_player(_f(fb, "GP"), _f(fb, "MIN")):
+            fb = last_row
+            if fb is not None and _row_usable(fb):
                 row = fb
                 season_used = fallback_season
-                reason = (
-                    "missing-current"
-                    if pid not in by_id_primary
-                    else "thin-current"
-                )
+                reason = "missing-current" if reg_row is None else "thin-current"
             elif row is None:
                 continue
-            # else keep thin current row if present
-
         assert row is not None
-        # Drop near-empty rows
         if _f(row, "MIN") < 1.0 and _f(row, "GP") < 1:
             continue
-        # Soft roster filter for non-roster low-minute bodies
         if (
             roster_ids is not None
             and pid not in roster_ids
@@ -386,11 +615,7 @@ def _build_team_with_fallback(
             and season_used == primary_season
         ):
             continue
-
-        p = _clip_player_rates(
-            _player_from_row(row, abbr, prior_season=season_used)
-        )
-        # Keep team_id as current team even if prior season was elsewhere
+        p = _clip_player_rates(_player_from_row(row, abbr, prior_season=season_used))
         p.team_id = tid
         p.team_abbr = abbr
         players.append(p)
@@ -403,14 +628,13 @@ def _build_team_with_fallback(
         )
 
     players.sort(key=lambda p: p.min, reverse=True)
-    usable = [p for p in players if is_usable_player(p.gp, p.min)]
+    usable = [p for p in players if is_usable_player(p.gp, p.min) or p.min >= 8]
 
-    # Whole-team fallback: still fewer than MIN_USABLE_PLAYERS → rebuild from
-    # previous season team dash (full prior season, no same-game leak).
+    # Whole-team last-season fill if still thin after blend
     if len(usable) < MIN_USABLE_PLAYERS and fallback_players is not None:
         fb_players: list[PlayerSeason] = []
         for pid, row in by_id_fallback_team.items():
-            if not is_usable_player(_f(row, "GP"), _f(row, "MIN")):
+            if not _row_usable(row):
                 continue
             p = _clip_player_rates(
                 _player_from_row(row, abbr, prior_season=fallback_season)
@@ -420,7 +644,6 @@ def _build_team_with_fallback(
             fb_players.append(p)
         fb_players.sort(key=lambda p: p.min, reverse=True)
         if len(fb_players) >= MIN_USABLE_PLAYERS:
-            # Prefer merging: keep any current usable, fill rest from fallback
             have = {p.player_id for p in usable}
             merged = list(usable)
             for p in fb_players:
@@ -437,44 +660,15 @@ def _build_team_with_fallback(
                 have.add(p.player_id)
             merged.sort(key=lambda p: p.min, reverse=True)
             players = merged
-            provenance.team_notes[abbr] = (
-                f"thin current season ({current_usable} usable < "
-                f"{MIN_USABLE_PLAYERS}); filled from {fallback_season}"
-            )
-            if fallback_teams is not None and team_stats_season == primary_season:
-                # Prefer fallback advanced when whole-team player fill kicked in
-                # and current usable was very thin
-                if current_usable < MIN_USABLE_PLAYERS:
-                    pace, ortg, drtg = _team_advanced(tid, fallback_teams)
-                    team_stats_season = fallback_season
-        elif len(fb_players) > len(usable):
-            players = fb_players
-            provenance.team_notes[abbr] = (
-                f"whole-team fallback to {fallback_season} "
-                f"({len(fb_players)} players; current usable={current_usable})"
-            )
-            for p in players:
-                provenance.record_player(
-                    team_abbr=abbr,
-                    player_id=p.player_id,
-                    name=p.name,
-                    season_used=fallback_season,
-                    reason="whole-team-fallback",
-                )
-            if fallback_teams is not None:
-                pace, ortg, drtg = _team_advanced(tid, fallback_teams)
+            if last_adv is not None and team_gp < 3:
+                pace, ortg, drtg = last_adv
                 team_stats_season = fallback_season
-    else:
-        n_fb = sum(1 for p in players if p.prior_season == fallback_season)
-        if n_fb:
-            provenance.team_notes[abbr] = (
-                f"{current_usable} usable from {primary_season}; "
-                f"{n_fb} filled from {fallback_season}"
-            )
-        else:
-            provenance.team_notes[abbr] = (
-                f"all {len(players)} players from {primary_season}"
-            )
+
+    provenance.team_notes[abbr] = (
+        f"blend begin-season: last={n_with_last} pre={n_with_pre} "
+        f"rookies={n_rookie} roster_n={len(players)} team_gp≈{team_gp:.0f} "
+        f"adv={team_stats_season}"
+    )
 
     return TeamSeason(
         team_id=tid,
@@ -502,7 +696,7 @@ def _load_live(
     date_to = _date_to_param(cutoff)
     fb_season = fallback_season_for(season)
     cache_key = (
-        f"matchup_{season}_fb{fb_season if allow_fallback else 'off'}_"
+        f"matchup_blendv2_{season}_fb{fb_season if allow_fallback else 'off'}_"
         f"{home['id']}_{away['id']}_"
         f"asof_{cutoff.isoformat() if cutoff else 'latest'}"
     )
@@ -514,33 +708,46 @@ def _load_live(
         else:
             return md
 
-    print(f"  fetching live NBA Stats for season {season} ...")
+    print(
+        f"  fetching live NBA Stats for season {season} "
+        f"(regular + preseason + last-season blend) ..."
+    )
     player_rows = _fetch_league_player_stats(season, date_to)
     team_rows = _fetch_league_team_stats(season, date_to)
 
     fallback_player_rows: list[dict[str, Any]] | None = None
     fallback_team_rows: list[dict[str, Any]] | None = None
-    # Early season often needs prior-year fill — fetch previous season full
-    # priors (no DateTo on prior season → complete prior year; still no
-    # same-game box score).
+    preseason_player_rows: list[dict[str, Any]] | None = None
+
+    # Beginning of season: always pull last season (full) + current preseason.
     if allow_fallback:
-        print(f"  fetching fallback season {fb_season} priors (full season) ...")
+        print(f"  fetching last season {fb_season} priors (full regular season) ...")
         try:
             fallback_player_rows = _fetch_league_player_stats(fb_season, None)
             fallback_team_rows = _fetch_league_team_stats(fb_season, None)
         except Exception as exc:  # noqa: BLE001
-            print(f"  fallback season warning: {exc}")
+            print(f"  last-season warning: {exc}")
             fallback_player_rows = None
             fallback_team_rows = None
             if not player_rows:
                 raise RuntimeError(
-                    f"No player rows for {season} and fallback {fb_season} failed."
+                    f"No player rows for {season} and last season {fb_season} failed."
                 ) from exc
 
-    if not player_rows and not fallback_player_rows:
+        print(f"  fetching {season} Pre Season player priors ...")
+        try:
+            preseason_player_rows = _fetch_league_player_stats(
+                season, None, season_type="Pre Season"
+            )
+            print(f"  preseason rows: {len(preseason_player_rows)}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"  preseason warning: {exc}")
+            preseason_player_rows = None
+
+    if not player_rows and not fallback_player_rows and not preseason_player_rows:
         raise RuntimeError(
-            f"No player rows returned for season {season} (or fallback "
-            f"{fb_season}). Default target is {CURRENT_SEASON}."
+            f"No player rows returned for season {season} (or last season "
+            f"{fb_season} / preseason). Default target is {CURRENT_SEASON}."
         )
 
     provenance = PriorProvenance(
@@ -550,16 +757,19 @@ def _load_live(
 
     roster_home: set[int] | None = None
     roster_away: set[int] | None = None
+    meta_home: dict[int, RosterMeta] = {}
+    meta_away: dict[int, RosterMeta] = {}
     try:
         rh = _fetch_roster(int(home["id"]), season)
         roster_home = {int(r["PLAYER_ID"]) for r in rh}
+        meta_home = parse_roster_meta(rh)
     except Exception as exc:  # noqa: BLE001
         print(f"  roster home warning: {exc}")
-        # Try previous-season roster as soft guide
         if allow_fallback:
             try:
                 rh = _fetch_roster(int(home["id"]), fb_season)
                 roster_home = {int(r["PLAYER_ID"]) for r in rh}
+                meta_home = parse_roster_meta(rh)
                 print(f"  using {fb_season} roster for home as guide")
             except Exception as exc2:  # noqa: BLE001
                 print(f"  roster home fallback warning: {exc2}")
@@ -567,12 +777,14 @@ def _load_live(
     try:
         ra = _fetch_roster(int(away["id"]), season)
         roster_away = {int(r["PLAYER_ID"]) for r in ra}
+        meta_away = parse_roster_meta(ra)
     except Exception as exc:  # noqa: BLE001
         print(f"  roster away warning: {exc}")
         if allow_fallback:
             try:
                 ra = _fetch_roster(int(away["id"]), fb_season)
                 roster_away = {int(r["PLAYER_ID"]) for r in ra}
+                meta_away = parse_roster_meta(ra)
                 print(f"  using {fb_season} roster for away as guide")
             except Exception as exc2:  # noqa: BLE001
                 print(f"  roster away fallback warning: {exc2}")
@@ -591,6 +803,9 @@ def _load_live(
         fallback_teams=fallback_team_rows,
         roster_ids=roster_home,
         provenance=provenance,
+        preseason_players=preseason_player_rows,
+        roster_meta=meta_home,
+        allow_blend=allow_fallback,
     )
     away_t = _build_team_with_fallback(
         away,
@@ -602,6 +817,9 @@ def _load_live(
         fallback_teams=fallback_team_rows,
         roster_ids=roster_away,
         provenance=provenance,
+        preseason_players=preseason_player_rows,
+        roster_meta=meta_away,
+        allow_blend=allow_fallback,
     )
 
     if len(home_t.players) < MIN_USABLE_PLAYERS or len(away_t.players) < MIN_USABLE_PLAYERS:
@@ -656,11 +874,15 @@ def _matchup_to_dict(md: MatchupData) -> dict[str, Any]:
 def _team_from_dict(d: dict[str, Any]) -> TeamSeason:
     players = []
     for p in d.get("players", []):
-        # Tolerate older cache without prior_season / injury fields
+        # Tolerate older cache without prior_season / injury / blend fields
         kwargs = dict(p)
         kwargs.setdefault("prior_season", d.get("team_stats_season") or "")
         kwargs.setdefault("injury_mult", 1.0)
         kwargs.setdefault("injury_status", "")
+        kwargs.setdefault("blend_weights", {})
+        kwargs.setdefault("is_rookie", False)
+        allowed = set(PlayerSeason.__dataclass_fields__)
+        kwargs = {k: v for k, v in kwargs.items() if k in allowed}
         players.append(PlayerSeason(**kwargs))
     return TeamSeason(
         team_id=int(d["team_id"]),
@@ -743,8 +965,9 @@ def load_matchup(
     Pull live roster/stats priors for the matchup.
 
     Default: live NBA Stats for `season` (project default 2026-27), with
-    previous-season fill when current usable players < MIN_USABLE_PLAYERS
-    or individual roster gaps exist.
+    beginning-of-season blend of last season + preseason + rookie expected
+    production (GP-weighted toward current regular S2D). Whole-team
+    last-season fill if still < MIN_USABLE_PLAYERS.
     Fixtures: ONLY if force_fixtures=True. Never silent fixture fallback.
     """
     if force_fixtures:

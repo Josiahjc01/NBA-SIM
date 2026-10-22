@@ -61,17 +61,28 @@ Previous-season fallback uses **full prior-season** dashboards (no DateTo) — s
 
 We **never** fetch that game’s box score or final score to calibrate or “predict” it.
 
-### Last-season fallback
+### Beginning-of-season prior blend
+
+Designed for the **start of 2026-27** (and any early-GP window). Player rate priors are a weighted mix — not a hard swap:
+
+| Component | Weight (pseudo-counts) | Notes |
+|-----------|------------------------|-------|
+| Current regular S2D | `GP_reg` | DateTo = tip−1 when dated |
+| Last season regular | `K_LAST = 25` if usable last-season row | Full prior season; no tip box |
+| Preseason | `K_PRE = 6 × min(GP_pre, 4)/4` | `season_type=Pre Season` for current label |
+| Rookie expected production | `K_ROOKIE = 15` | Position G/F/C archetype when EXP=`R` / no NBA last season |
+
+At GP_reg≈0 a veteran is ~last (+ pre if available). A rookie is ~archetype + preseason. As regular GP grows, weight shifts to live S2D.
 
 | Rule | Value |
 |------|--------|
 | Primary season | `2026-27` (or `--season` / date-derived) |
-| Fallback season | Previous label (e.g. `2025-26`) |
-| Usable player | `GP ≥ 1` and `MIN ≥ 1` |
-| Team threshold | Need ≥ **5** usable players |
-| Behavior | Fill missing/thin roster players from fallback; if still short → whole-team fill (+ team advanced stats if current empty/thin) |
-| Reporting | Provenance block lists player → season + team notes |
-| Opt-out | `--no-fallback` |
+| Last-season source | Previous label (e.g. `2025-26`) |
+| Usable after blend | `GP ≥ 1` and `MIN ≥ 1` (or meaningful blended minutes) |
+| Team threshold | Need ≥ **5** usable; else whole-team last-season fill |
+| Team pace/ORtg/DRtg | Same GP vs `K_LAST` blend |
+| Reporting | Provenance lists blend weights + rookies |
+| Opt-out | `--no-fallback` → current regular only |
 
 ### Rate limits & caching
 
