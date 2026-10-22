@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.0
+Firm v1.0 release on top of 0.7.0. Cache schema remains **`blendv10`**.
+
+**Audit Critical/High (PR #4)**
+- **C1** Enrich DateTo = `_date_to_param(prior_cutoff)` → `MM/DD/YYYY` (anti-leak)
+- **H1** Undated live runs cut priors at Eastern yesterday
+- **H2** Defense stack: DRtg primary; secondary D damped ±2% (`residual_defense_mult`)
+- **H3** Play-In **Apr 11–18**; Playoffs from **Apr 19**
+
+Includes v0.7 gaps + **Top 5 wagers** footer. See `RELEASE.md`.
+
 ## 0.7.0
 Gap finish + next-tier accuracy; cache schema **`blendv10`**. Top 5 wagers at bottom of every report.
 
