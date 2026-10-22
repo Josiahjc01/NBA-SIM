@@ -10,7 +10,7 @@ from datetime import date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from nba_sim.data import _with_retries, API_TIMEOUT
+from nba_sim.httputil import endpoint_kwargs, with_retries
 
 EASTERN = ZoneInfo("America/New_York")
 
@@ -62,11 +62,11 @@ def fetch_slate(game_date: date) -> list[SlateGame]:
             game_date=date_str,
             day_offset=0,
             league_id="00",
-            timeout=API_TIMEOUT,
+            **endpoint_kwargs(),
         )
         return ep.get_normalized_dict()
 
-    payload = _with_retries(f"ScoreboardV2({date_str})", call)
+    payload = with_retries(f"ScoreboardV2({date_str})", call)
     headers = payload.get("GameHeader") or []
     games: list[SlateGame] = []
     for row in headers:

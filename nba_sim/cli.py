@@ -71,6 +71,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Omit per-player prior provenance block from text report (team notes kept).",
     )
+    p.add_argument(
+        "--no-rest",
+        action="store_true",
+        help="Disable B2B/rest check (yesterday's slate) when a tip date is known.",
+    )
     p.add_argument("--no-cache", action="store_true", help="Bypass on-disk API cache")
     p.add_argument(
         "--no-fallback",
@@ -129,6 +134,20 @@ def _apply_injury_flags(matchup, args):
     return matchup
 
 
+def _apply_rest_flags(matchup, game_date, args):
+    if args.no_rest or game_date is None:
+        return matchup
+    from nba_sim.rest import apply_b2b_flags
+
+    notes = apply_b2b_flags(
+        matchup, game_date, use_fixtures=bool(args.fixtures)
+    )
+    matchup.rest_notes = notes
+    for n in notes:
+        print(f"  rest: {n}")
+    return matchup
+
+
 def _run_one_matchup(
     home: dict,
     away: dict,
@@ -149,6 +168,7 @@ def _run_one_matchup(
         allow_fallback=not args.no_fallback,
     )
     _apply_injury_flags(matchup, args)
+    _apply_rest_flags(matchup, game_date, args)
     summary = run_simulations(matchup, n=args.n, seed=seed, lines=lines)
     return matchup, summary
 

@@ -94,6 +94,7 @@ Live odds feeds are not wired; pass lines via flags or `--lines-csv` for slate.
 | `--seed` | no | RNG seed |
 | `--json` | no | Machine-readable JSON output |
 | `--quiet-priors` | no | Compact provenance (team notes only) |
+| `--no-rest` | no | Disable B2B check when tip date is set |
 | `--no-cache` | no | Bypass on-disk API cache |
 | `--no-fallback` | no | Current-season priors only |
 | `--injuries` | no | Live ESPN injury feed |

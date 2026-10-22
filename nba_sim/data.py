@@ -33,14 +33,12 @@ from nba_sim.priors import (
     parse_roster_meta,
     rookie_prior_row,
 )
+from nba_sim.httputil import endpoint_kwargs, with_retries
 from nba_sim.season import CURRENT_SEASON
 
 CACHE_DIR = Path(__file__).resolve().parents[1] / ".cache"
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 CACHE_TTL_SECONDS = 6 * 60 * 60  # shorter so live S2D stays fresh
-REQUEST_PAUSE = 0.8
-API_TIMEOUT = 120
-API_RETRIES = 3
 
 
 @dataclass
@@ -99,6 +97,7 @@ class MatchupData:
     provenance: PriorProvenance | None = None
     injuries_applied: bool = False
     injury_notes: list[str] = field(default_factory=list)
+    rest_notes: list[str] = field(default_factory=list)
 
 
 def _cache_path(key: str) -> Path:
@@ -125,10 +124,6 @@ def _read_cache(key: str, use_cache: bool) -> Any | None:
 def _write_cache(key: str, payload: Any) -> None:
     path = _cache_path(key)
     path.write_text(json.dumps(payload))
-
-
-def _pause() -> None:
-    time.sleep(REQUEST_PAUSE)
 
 
 def _f(row: dict[str, Any], *keys: str, default: float = 0.0) -> float:
@@ -158,18 +153,8 @@ def _date_to_param(cutoff: date | None) -> str | None:
     return cutoff.strftime("%m/%d/%Y")
 
 
-def _with_retries(label: str, fn):
-    last: Exception | None = None
-    for attempt in range(1, API_RETRIES + 1):
-        try:
-            _pause()
-            return fn()
-        except Exception as exc:  # noqa: BLE001
-            last = exc
-            wait = min(2**attempt, 16)
-            print(f"  retry {attempt}/{API_RETRIES} {label}: {exc} (sleep {wait}s)")
-            time.sleep(wait)
-    raise RuntimeError(f"{label} failed after {API_RETRIES} tries: {last}")
+# Back-compat alias for schedule.py and tests
+_with_retries = with_retries
 
 
 def _fetch_league_player_stats(
@@ -181,19 +166,20 @@ def _fetch_league_player_stats(
     from nba_api.stats.endpoints import leaguedashplayerstats
 
     def call():
-        kwargs: dict[str, Any] = {
-            "season": season,
-            "per_mode_detailed": "PerGame",
-            "season_type_all_star": season_type,
-            "timeout": API_TIMEOUT,
-        }
+        kwargs: dict[str, Any] = endpoint_kwargs(
+            {
+                "season": season,
+                "per_mode_detailed": "PerGame",
+                "season_type_all_star": season_type,
+            }
+        )
         # DateTo only for regular season (preseason is short; use full pre slate).
         if date_to and season_type == "Regular Season":
             kwargs["date_to_nullable"] = date_to
         ep = leaguedashplayerstats.LeagueDashPlayerStats(**kwargs)
         return ep.get_normalized_dict()["LeagueDashPlayerStats"]
 
-    return _with_retries(f"LeagueDashPlayerStats({season},{season_type})", call)
+    return with_retries(f"LeagueDashPlayerStats({season},{season_type})", call)
 
 
 def _fetch_league_team_stats(
@@ -205,19 +191,20 @@ def _fetch_league_team_stats(
     from nba_api.stats.endpoints import leaguedashteamstats
 
     def call():
-        kwargs: dict[str, Any] = {
-            "season": season,
-            "per_mode_detailed": "PerGame",
-            "measure_type_detailed_defense": "Advanced",
-            "season_type_all_star": season_type,
-            "timeout": API_TIMEOUT,
-        }
+        kwargs: dict[str, Any] = endpoint_kwargs(
+            {
+                "season": season,
+                "per_mode_detailed": "PerGame",
+                "measure_type_detailed_defense": "Advanced",
+                "season_type_all_star": season_type,
+            }
+        )
         if date_to and season_type == "Regular Season":
             kwargs["date_to_nullable"] = date_to
         ep = leaguedashteamstats.LeagueDashTeamStats(**kwargs)
         return ep.get_normalized_dict()["LeagueDashTeamStats"]
 
-    return _with_retries(f"LeagueDashTeamStats({season},{season_type})", call)
+    return with_retries(f"LeagueDashTeamStats({season},{season_type})", call)
 
 
 def _fetch_roster(team_id: int, season: str) -> list[dict[str, Any]]:
@@ -225,11 +212,11 @@ def _fetch_roster(team_id: int, season: str) -> list[dict[str, Any]]:
 
     def call():
         ep = commonteamroster.CommonTeamRoster(
-            team_id=team_id, season=season, timeout=API_TIMEOUT
+            team_id=team_id, season=season, **endpoint_kwargs()
         )
         return ep.get_normalized_dict()["CommonTeamRoster"]
 
-    return _with_retries(f"CommonTeamRoster({team_id},{season})", call)
+    return with_retries(f"CommonTeamRoster({team_id},{season})", call)
 
 
 def _player_from_row(
@@ -860,6 +847,7 @@ def _matchup_to_dict(md: MatchupData) -> dict[str, Any]:
         "provenance": prov,
         "injuries_applied": md.injuries_applied,
         "injury_notes": md.injury_notes,
+        "rest_notes": md.rest_notes,
     }
 
 
@@ -908,6 +896,7 @@ def _matchup_from_dict(d: dict[str, Any], source: str | None = None) -> MatchupD
         provenance=prov,
         injuries_applied=bool(d.get("injuries_applied", False)),
         injury_notes=list(d.get("injury_notes") or []),
+        rest_notes=list(d.get("rest_notes") or []),
     )
 
 

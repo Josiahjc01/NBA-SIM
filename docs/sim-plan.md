@@ -101,8 +101,10 @@ Possession Monte Carlo (not independent Normal team scores).
 3. **Usage:** `∝ FGA × √MIN` (normalized). Not equal-usage.
 4. **Possession outcomes:** TOV → else shot (2/3 by player 3PA rate) → make/miss; assists on ~65% of makes; OREB can extend possession; DREB to defense.
 5. **Home court:** `+1.5%` absolute FG only (no home pace bump).
-6. **Opponent adj:** FG/3P × `(league_def / opp_def)` once, clipped.
-7. **OT:** if tied after regulation, up to 3× (12 possessions each); then +1 coin-flip. Every sim has a winner.
+6. **Opponent adj:** FG/3P × `(league_def / opp_def)` once, clipped to `[0.94, 1.06]`.
+7. **Team ORtg adj:** FG/3P × `(team_ortg / league)` once, clipped to `[0.97, 1.03]` (combined with DRtg adj).
+8. **B2B / rest (optional):** when tip date is set, yesterday’s slate (schedule only) → if team played, pace −1 and ORtg ×0.985. Disable with `--no-rest`.
+9. **OT:** if tied after regulation, up to 3× (12 possessions each); then +1 coin-flip. Every sim has a winner.
 
 ### Betting line math (when provided)
 

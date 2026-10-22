@@ -55,6 +55,13 @@ def format_report(
         for n in matchup.injury_notes:
             lines.append(f"  {n}")
 
+    if matchup.rest_notes:
+        lines.append("")
+        lines.append("Rest / B2B")
+        lines.append("-" * 64)
+        for n in matchup.rest_notes:
+            lines.append(f"  {n}")
+
     # Team summary with win%
     lines.append("")
     lines.append("Team results")

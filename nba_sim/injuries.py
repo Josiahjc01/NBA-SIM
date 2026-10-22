@@ -72,7 +72,10 @@ def fetch_espn_injuries(timeout: float = 20.0) -> list[InjuryEntry]:
     """Pull current NBA injury list from ESPN site API."""
     req = urllib.request.Request(
         ESPN_INJURIES_URL,
-        headers={"User-Agent": "nba-sim/0.2 (research; +https://github.com/Josiahjc01/NBA-SIM)"},
+        headers={
+            "User-Agent": "nba-sim/0.3 (research; +https://github.com/Josiahjc01/NBA-SIM)",
+            "Accept": "application/json",
+        },
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         payload = json.loads(resp.read().decode("utf-8"))
@@ -124,14 +127,34 @@ def load_injuries_csv(path: str) -> list[InjuryEntry]:
     return entries
 
 
+def _name_tokens(name: str) -> list[str]:
+    return [t for t in _norm_name(name).split() if t]
+
+
+def _names_match(a: str, b: str) -> bool:
+    na, nb = _norm_name(a), _norm_name(b)
+    if not na or not nb:
+        return False
+    if na == nb or na in nb or nb in na:
+        return True
+    ta, tb = _name_tokens(a), _name_tokens(b)
+    if not ta or not tb:
+        return False
+    # Same last name + matching first initial / first token
+    if ta[-1] == tb[-1]:
+        if ta[0] == tb[0] or ta[0][0] == tb[0][0]:
+            return True
+    # High token overlap (handles "Kenyon Martin Jr" vs "Kenyon Martin")
+    overlap = len(set(ta) & set(tb))
+    return overlap >= min(2, len(ta), len(tb)) and ta[-1] == tb[-1]
+
+
 def _match_player(player: PlayerSeason, entries: Iterable[InjuryEntry]) -> InjuryEntry | None:
-    pn = _norm_name(player.name)
     team = player.team_abbr.upper()
     for e in entries:
         if e.team_abbr and e.team_abbr.upper() != team:
             continue
-        en = _norm_name(e.name)
-        if pn == en or pn in en or en in pn:
+        if _names_match(player.name, e.name):
             return e
     return None
 
@@ -170,25 +193,25 @@ def apply_injuries(
     Priority: csv_path entries, else live ESPN if live=True, else no-op.
     """
     notes: list[str] = []
-    loaded: list[InjuryEntry] = []
+    loaded: list[InjuryEntry] = list(entries or [])
     if csv_path:
-        loaded = load_injuries_csv(csv_path)
-        notes.append(f"injuries from CSV {csv_path} ({len(loaded)} rows)")
-    elif live:
+        csv_rows = load_injuries_csv(csv_path)
+        loaded.extend(csv_rows)
+        notes.append(f"injuries from CSV {csv_path} ({len(csv_rows)} rows)")
+    if live:
         try:
-            loaded = fetch_espn_injuries()
+            live_rows = fetch_espn_injuries()
+            loaded.extend(live_rows)
             notes.append(
-                f"injuries from ESPN feed ({len(loaded)} rows) — unofficial; see docs"
+                f"injuries from ESPN feed ({len(live_rows)} rows) — unofficial; see docs"
             )
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
             notes.append(f"injury live fetch failed ({exc}); continuing without")
-            matchup.injury_notes = notes
-            return matchup
-    else:
+    if not loaded:
+        matchup.injury_notes = notes
         return matchup
-
-    if entries:
-        loaded = list(entries) + loaded
+    if entries and not csv_path and not live:
+        notes.append(f"injuries from in-memory entries ({len(entries)} rows)")
 
     notes.extend(apply_injuries_to_team(matchup.home, loaded))
     notes.extend(apply_injuries_to_team(matchup.away, loaded))
