@@ -7,14 +7,15 @@
 | Home / away teams (name or abbreviation) | Single-game | `--home BOS --away NYK` (any of 30) |
 | Full-day slate | Alt mode | `--slate` or `--slate-date 2026-10-22` |
 | Game date | Optional (single) | `--date 2026-10-22` |
-| Season type | Optional | `--season-type Playoffs` (else from tip date) |
-| Spread / total | Optional | `--spread -3.5 --total 224.5` |
+| Season type | Optional | `--season-type Playoffs` / `IST` (else from tip date) |
+| Spread / total | Optional | `--spread -3.5 --total 224.5` (else live ESPN odds) |
 
 - **Do not** pass CSVs of box scores or player stats — the system fetches priors.
 - Engine is **team-agnostic** for all 30 franchises (`nba_api` static + aliases + arena coords). Only DEN home altitude is a venue special case.
 - If `--date` / `--season` omitted → **live `2026-27`** season-to-date (`CURRENT_SEASON`).
-- If `--date` or slate date is set → season from that calendar date; **priors only through the day before tip** (pre-tip cutoff). Tip dates ≈ Apr 15–Jun 30 use **Playoffs** boards (override with `--season-type`). See [realism-audit.md](./realism-audit.md).
+- If `--date` or slate date is set → season from that calendar date; **priors only through the day before tip** (pre-tip cutoff). Tip dates ≈ Apr 15–Jun 30 → **Playoffs** boards; ≈ Nov 21–Dec 17 → **IST/NBA Cup** regime (RS boards). Override with `--season-type`. See [realism-audit.md](./realism-audit.md).
 - `--fixtures` is offline smoke only — **never** the default; live failures raise (no silent fixture swap).
+- Cache schema **`blendv9`** — use `--no-cache` once after upgrading.
 
 ```bash
 python -m nba_sim --home BOS --away NYK --n 5000
@@ -52,13 +53,19 @@ For N simulations (per game):
 | Team pace / ORtg / DRtg | `LeagueDashTeamStats` (`Advanced`) |
 | Player advanced | `LeagueDashPlayerStats` (`Advanced`) — USG/TS/eFG |
 | Hustle | `LeagueHustleStatsTeam` — deflections / contested |
-| PtDefend | `LeagueDashPtTeamDefend` — Overall / 3PT / Less Than 6Ft |
+| PtDefend (team) | `LeagueDashPtTeamDefend` — Overall / 3PT / Less Than 6Ft |
+| PtDefend (player) | `LeagueDashPtDefend` — Overall / 3 Pointers |
+| Last-N minutes | `LeagueDashPlayerStats` `LastNGames=5` |
+| Lineup nets | `LeagueDashLineups` group_quantity=5 Advanced |
+| Clutch | `LeagueDashPlayerClutch` (Last 5 min, ±≤5) |
+| True SoS | Team NET_RATING × recent `ScoreboardV2` slate |
 | Four Factors | `LeagueDashTeamStats` MeasureType=`Four Factors` |
 | Shot zones | `LeagueDashTeamShotLocations` DistanceRange=`By Zone` |
 | Heights / position | `CommonTeamRoster` |
 | Daily slate | `ScoreboardV2` (schedule only) |
+| Closing lines | ESPN scoreboard `odds` (or CLI / `--lines-csv`) |
 | Travel / altitude | Static arena lat/lon + DEN home flag (no box leak) |
-| Injuries (live default on) | ESPN site API (+ core fallback) or `--injuries-csv` |
+| Injuries (live default on) | ESPN site + core + team + scoreboard (or `--injuries-csv`) |
 
 ### Pre-tip cutoff (anti-leak)
 

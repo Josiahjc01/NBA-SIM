@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.0
+Accuracy backlog (all 8) in one bump; cache schema **`blendv9`** (`--no-cache` once after upgrade).
+
+1. **Injuries multi-source** — ESPN site + core + per-team + scoreboard snippets; merge by severity; clear provenance; no tip-box inactive scrape (NBA CDN 403)
+2. **Last-N projected minutes** — `LeagueDashPlayerStats` LastNGames=5 → blend into tonight’s MIN (shrink w≤0.55, min GP=2)
+3. **Player PtDefend** — `LeagueDashPtDefend` Overall/3PT → minutes-weighted finish contest (±2.5%) atop team PtDefend
+4. **Lineup nets** — `LeagueDashLineups` best 5-man NET (min≥40) → mild ORtg/DRtg; thin → skip note
+5. **True SoS** — mean opp NET from recent slate (or tip-opponent proxy) → clipped ORtg/DRtg (beyond early-GP shrink)
+6. **Live closing lines** — ESPN scoreboard odds (DraftKings etc.); CLI/`--lines-csv` still win; light pace×total calibration (±1.5%); cover/over output
+7. **Playoff / IST modes** — tip → Playoffs (Apr 15–Jun 30) or IST/NBA Cup (≈Nov 21–Dec 17); IST uses RS boards + regime (pace/foul/star minutes)
+8. **Clutch** — `LeagueDashPlayerClutch` with FGA≥15 + heavy shrink (K=40, w≤0.25, ±3%); else skip with note
+
+New modules: `enrich.py`, `regime.py`. Doctor probes last-N / player PtDefend / lineups / clutch / ESPN odds. Flags: `--no-enrich`, `--no-live-lines`, `--season-type IST`.
+
 ## 0.5.1
 - **All-30 generality:** richer aliases (GS/SA/WSH/CHO/BRK/…); short-query guard
   so `GS`/`SA` no longer substring-collide; error copy team-agnostic

@@ -207,6 +207,46 @@ def pt_defend_fg_multipliers(prof: PtDefendProfile) -> tuple[float, float]:
     return fg2, fg3
 
 
+def player_pt_defend_team_multipliers(opp_team: Any) -> tuple[float, float]:
+    """
+    Minutes-weighted mean of opponent player D_FG% → mild finish contest.
+
+    Complements team LeagueDashPtTeamDefend. Missing player fields → (1,1).
+    Clipped ±2.5% on FG2/FG3.
+    """
+    if opp_team is None:
+        return 1.0, 1.0
+    players = list(getattr(opp_team, "players", []) or [])
+    w_sum = dfg_sum = dfg3_sum = w3_sum = 0.0
+    for p in players:
+        mins = float(getattr(p, "min", 0.0) or 0.0)
+        if mins <= 0:
+            continue
+        dfg = float(getattr(p, "pt_dfg", 0.0) or 0.0)
+        dfg3 = float(getattr(p, "pt_dfg_three", 0.0) or 0.0)
+        if dfg > 0:
+            w_sum += mins
+            dfg_sum += dfg * mins
+        if dfg3 > 0:
+            w3_sum += mins
+            dfg3_sum += dfg3 * mins
+    if w_sum <= 0 and w3_sum <= 0:
+        return 1.0, 1.0
+    fg2 = fg3 = 1.0
+    if w_sum > 0:
+        mean = dfg_sum / w_sum
+        z = (mean - LEAGUE_PT_DFG_OVERALL) / 0.025
+        # Soft D (high D_FG allowed) → offense finishes better
+        fg2 = max(0.975, min(1.025, 1.0 + 0.010 * max(-1.5, min(1.5, z))))
+        if w3_sum <= 0:
+            fg3 = max(0.98, min(1.02, 1.0 + 0.008 * max(-1.5, min(1.5, z))))
+    if w3_sum > 0:
+        mean3 = dfg3_sum / w3_sum
+        z3 = (mean3 - LEAGUE_PT_DFG_THREE) / 0.025
+        fg3 = max(0.975, min(1.025, 1.0 + 0.012 * max(-1.5, min(1.5, z3))))
+    return fg2, fg3
+
+
 def parse_hustle_row(row: dict[str, Any]) -> HustleProfile:
     def _f(*keys: str) -> float:
         for k in keys:

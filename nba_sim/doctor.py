@@ -221,14 +221,12 @@ def check_shot_locations(season: str | None = None) -> CheckResult:
 
 
 def check_espn_injuries() -> CheckResult:
-    t0 = time.time()
-
     def call():
         req = urllib.request.Request(
             ESPN_INJURIES_URL,
             headers={
                 "User-Agent": (
-                    "Mozilla/5.0 (compatible; nba-sim/0.4; "
+                    "Mozilla/5.0 (compatible; nba-sim/0.6; "
                     "+https://github.com/Josiahjc01/NBA-SIM)"
                 ),
                 "Accept": "application/json",
@@ -244,6 +242,91 @@ def check_espn_injuries() -> CheckResult:
     if err:
         return CheckResult("ESPN injuries", False, False, err, ms)
     return CheckResult("ESPN injuries", False, True, f"{n} entries", ms)
+
+
+def check_last_n(season: str | None = None) -> CheckResult:
+    from nba_sim.enrich import fetch_last_n_player_stats
+
+    season = season or CURRENT_SEASON
+    val, err = soft_fetch(
+        "last-N",
+        lambda: fetch_last_n_player_stats(season, None, use_cache=True),
+        retries=2,
+        use_cache=False,
+    )
+    if err or not val:
+        return CheckResult("LastNGames player stats", False, False, err or "empty", 0.0)
+    return CheckResult(
+        "LastNGames player stats", False, True, f"{len(val)} rows season={season}", 0.0
+    )
+
+
+def check_player_pt_defend(season: str | None = None) -> CheckResult:
+    from nba_sim.enrich import fetch_player_pt_defend
+
+    season = season or CURRENT_SEASON
+    val, err = soft_fetch(
+        "player PtDefend",
+        lambda: fetch_player_pt_defend(season, None, use_cache=True),
+        retries=2,
+        use_cache=False,
+    )
+    if err or not val:
+        return CheckResult("LeagueDashPtDefend (player)", False, False, err or "empty", 0.0)
+    return CheckResult(
+        "LeagueDashPtDefend (player)",
+        False,
+        True,
+        f"{len(val)} rows season={season}",
+        0.0,
+    )
+
+
+def check_lineups(season: str | None = None) -> CheckResult:
+    from nba_sim.enrich import fetch_team_lineups
+
+    season = season or CURRENT_SEASON
+    val, err = soft_fetch(
+        "lineups",
+        lambda: fetch_team_lineups(season, None, use_cache=True),
+        retries=2,
+        use_cache=False,
+    )
+    if err or not val:
+        return CheckResult("LeagueDashLineups", False, False, err or "empty", 0.0)
+    return CheckResult(
+        "LeagueDashLineups", False, True, f"{len(val)} rows season={season}", 0.0
+    )
+
+
+def check_clutch(season: str | None = None) -> CheckResult:
+    from nba_sim.enrich import fetch_player_clutch
+
+    season = season or CURRENT_SEASON
+    val, err = soft_fetch(
+        "clutch",
+        lambda: fetch_player_clutch(season, None, use_cache=True),
+        retries=2,
+        use_cache=False,
+    )
+    if err or not val:
+        return CheckResult("LeagueDashPlayerClutch", False, False, err or "empty", 0.0)
+    return CheckResult(
+        "LeagueDashPlayerClutch", False, True, f"{len(val)} rows season={season}", 0.0
+    )
+
+
+def check_espn_odds() -> CheckResult:
+    from nba_sim.lines import fetch_espn_closing_lines
+
+    def call():
+        board = fetch_espn_closing_lines()
+        return len(board)
+
+    n, ms, err = _timed(call)
+    if err:
+        return CheckResult("ESPN closing lines", False, False, err, ms)
+    return CheckResult("ESPN closing lines", False, True, f"{n} games with odds", ms)
 
 
 def run_doctor(
@@ -281,6 +364,11 @@ def run_doctor(
         lambda: check_four_factors(season),
         lambda: check_shot_locations(season),
         check_espn_injuries,
+        lambda: check_last_n(season),
+        lambda: check_player_pt_defend(season),
+        lambda: check_lineups(season),
+        lambda: check_clutch(season),
+        check_espn_odds,
     ):
         r = fn()
         checks.append(r)

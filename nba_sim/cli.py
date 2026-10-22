@@ -88,8 +88,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="TYPE",
         help=(
-            "Regular Season | Playoffs | Pre Season. Default: derived from --date "
-            "(Playoffs ≈ Apr 15–Jun 30); otherwise Regular Season."
+            "Regular Season | Playoffs | Pre Season | IST. Default: derived from "
+            "--date (Playoffs ≈ Apr 15–Jun 30; IST/NBA Cup ≈ Nov 21–Dec 17). "
+            "IST still uses Regular Season boards + Cup regime."
         ),
     )
     p.add_argument("--n", type=int, default=5000, help="Number of simulations (default 5000; max 200000)")
@@ -156,9 +157,20 @@ def build_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=None,
         help=(
-            "ESPN injury feed (Out/Doubtful→0 min, Questionable→×0.5). "
+            "Multi-source ESPN injuries (site+core+team+scoreboard; "
+            "Out/Doubtful/Inactive→0 min, Questionable→×0.5). "
             "Default: on for live, off for --fixtures. Use --no-injuries to skip."
         ),
+    )
+    p.add_argument(
+        "--no-enrich",
+        action="store_true",
+        help="Skip v0.6 enrichment (last-N minutes, player PtDefend, lineups, SoS, clutch).",
+    )
+    p.add_argument(
+        "--no-live-lines",
+        action="store_true",
+        help="Do not auto-pull ESPN scoreboard closing lines when --spread/--total omitted.",
     )
     p.add_argument(
         "--injuries-csv",
@@ -237,6 +249,13 @@ def _run_one_matchup(
     seed: int | None,
     season_type: str = "Regular Season",
 ) -> tuple:
+    from datetime import timedelta
+
+    from nba_sim.enrich import enrich_matchup
+    from nba_sim.lines import light_total_calibration, resolve_game_lines
+    from nba_sim.regime import apply_game_mode
+    from nba_sim.season import boards_season_type
+
     force_fx = bool(args.fixtures or args.fixture_file)
     matchup = load_matchup(
         home,
@@ -255,6 +274,26 @@ def _run_one_matchup(
             _log(args, f"  feed: {n}")
         if len(fails) > 10:
             _log(args, f"  feed: … +{len(fails) - 10} more")
+
+    # v0.6 enrichment (last-N / player PtDefend / lineups / SoS / clutch)
+    if not force_fx and not getattr(args, "no_enrich", False):
+        date_to = None
+        if game_date is not None:
+            date_to = (game_date - timedelta(days=1)).isoformat()
+        enotes = enrich_matchup(
+            matchup,
+            season=season,
+            date_to=date_to,
+            game_date=game_date,
+            season_type=boards_season_type(season_type),
+            use_cache=not args.no_cache,
+            use_fixtures=force_fx,
+        )
+        for n in enotes[:10]:
+            _log(args, f"  enrich: {n}")
+        if len(enotes) > 10:
+            _log(args, f"  enrich: … +{len(enotes) - 10} more")
+
     _apply_injury_flags(matchup, args)
     if matchup.injury_notes:
         for n in matchup.injury_notes[:8]:
@@ -262,13 +301,50 @@ def _run_one_matchup(
         if len(matchup.injury_notes) > 8:
             _log(args, f"  injury: … +{len(matchup.injury_notes) - 8} more")
     _apply_rest_flags(matchup, game_date, args)
+
+    # Playoff / IST regime (after injuries so OUT players stay out)
+    mode = season_type if season_type in ("Playoffs", "IST") else (
+        matchup.game_mode or "Regular Season"
+    )
+    rnotes = apply_game_mode(matchup, mode)
+    for n in rnotes:
+        _log(args, f"  regime: {n}")
+
+    # Closing lines: CLI flags > CSV/slate row > live ESPN scoreboard odds
+    cli_lines = lines_from_args(spread=args.spread, total=args.total)
+    csv_row = None if cli_lines is not None else lines
+    resolved, lnotes = resolve_game_lines(
+        home_abbr=matchup.home.abbreviation,
+        away_abbr=matchup.away.abbreviation,
+        cli_lines=cli_lines,
+        csv_lines=csv_row,
+        live=not force_fx and not getattr(args, "no_live_lines", False),
+        date_str=game_date.isoformat() if game_date else None,
+    )
+    matchup.line_notes = list(lnotes)
+    for n in lnotes:
+        _log(args, f"  {n}")
+
+    if resolved is not None and resolved.total is not None:
+        cal = light_total_calibration(
+            float(matchup.home.pace),
+            float(matchup.away.pace),
+            resolved.total,
+        )
+        if abs(cal - 1.0) > 1e-4:
+            matchup.home.pace *= cal
+            matchup.away.pace *= cal
+            note = f"lines: light total calibration pace×{cal:.4f} toward {resolved.total}"
+            matchup.line_notes.append(note)
+            _log(args, f"  {note}")
+
     issues = validate_matchup(matchup)
     hard = [i for i in issues if "only" in i or "identical" in i]
     for i in issues:
         _log(args, f"  validate: {i}")
     if hard:
         raise RuntimeError("matchup failed validation: " + "; ".join(hard))
-    summary = run_simulations(matchup, n=args.n, seed=seed, lines=lines)
+    summary = run_simulations(matchup, n=args.n, seed=seed, lines=resolved)
     return matchup, summary
 
 

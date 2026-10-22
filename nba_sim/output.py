@@ -63,6 +63,27 @@ def format_report(
         for n in matchup.rest_notes:
             lines.append(f"  {n}")
 
+    if getattr(matchup, "enrichment_notes", None):
+        lines.append("")
+        lines.append("Enrichment (last-N / PtDefend / lineups / SoS / clutch)")
+        lines.append("-" * 64)
+        for n in matchup.enrichment_notes:
+            lines.append(f"  {n}")
+
+    if getattr(matchup, "regime_notes", None):
+        lines.append("")
+        lines.append(f"Game mode: {getattr(matchup, 'game_mode', '') or 'Regular Season'}")
+        lines.append("-" * 64)
+        for n in matchup.regime_notes:
+            lines.append(f"  {n}")
+
+    if getattr(matchup, "line_notes", None):
+        lines.append("")
+        lines.append("Betting lines")
+        lines.append("-" * 64)
+        for n in matchup.line_notes:
+            lines.append(f"  {n}")
+
     if matchup.matchup_notes:
         lines.append("")
         lines.append("Matchup context (size / coaching / pace)")

@@ -47,7 +47,7 @@ python -m nba_sim --check-data          # same
 python -m nba_sim doctor --json         # machine-readable
 ```
 
-Required feeds (player/team stats, roster, scoreboard) must pass. Optional feeds (hustle, PtDefend, Four Factors, shot locations, ESPN injuries) warn and degrade gracefully with loud `feed:` provenance. After upgrades use `--no-cache` once (schema `blendv8`).
+Required feeds (player/team stats, roster, scoreboard) must pass. Optional feeds (hustle, team/player PtDefend, Four Factors, shot locations, last-N, lineups, clutch, ESPN injuries/odds) warn and degrade gracefully with loud provenance. After upgrades use `--no-cache` once (schema **`blendv9`**).
 
 ### Live fetch env tips (`stats.nba.com`)
 
@@ -100,20 +100,34 @@ Oriented for tip-off / early **2026-27**:
 - Report prints blend weights (reg/last/pre/rookie) and rookie notes.
 - Disable the whole blend stack with `--no-fallback` (current regular only).
 
-### Injuries & betting lines (v1)
+### Injuries & betting lines (v0.6)
 
 ```bash
-# ESPN injury feed (unofficial): Out/Doubtful → 0 min; Questionable → ×0.5
-python -m nba_sim --home SAC --away LAC --injuries --n 5000
+# Multi-source ESPN injuries (default ON live): site + core + team + scoreboard
+python -m nba_sim --home BOS --away NYK --n 5000
 
 # Or CSV: name,team,status[,mult]
-python -m nba_sim --home SAC --away LAC --injuries-csv injuries.csv --n 5000
+python -m nba_sim --home BOS --away NYK --injuries-csv injuries.csv --n 5000
 
-# Lines (home spread / total) → cover% and over% from sims
-python -m nba_sim --home SAC --away LAC --spread -3.5 --total 224.5 --n 5000
+# Lines: CLI wins; else auto ESPN scoreboard closing odds; else --lines-csv
+python -m nba_sim --home BOS --away NYK --spread -3.5 --total 224.5 --n 5000
+python -m nba_sim --home BOS --away NYK --n 5000                  # live odds if available
+python -m nba_sim --home BOS --away NYK --no-live-lines --n 5000  # skip auto odds
 ```
 
-Live odds feeds are not wired; pass lines via flags or `--lines-csv` for slate.
+### v0.6 accuracy levers (default on for live)
+
+| Lever | Source | Effect |
+|-------|--------|--------|
+| Last-N minutes | `LeagueDashPlayerStats` LastN=5 | Blend into rotation MIN (hard shrink) |
+| Player PtDefend | `LeagueDashPtDefend` | Finish contest vs minutes-weighted D_FG |
+| Lineup nets | `LeagueDashLineups` | Mild ORtg/DRtg from best 5-man (thin → skip) |
+| True SoS | Team NET × recent slate | Opponent-adjusted ORtg/DRtg |
+| Clutch | `LeagueDashPlayerClutch` | ±3% FG if FGA≥15 after shrink; else skip |
+| IST / Playoffs | Tip date or `--season-type` | Pace / foul / star-minute regime |
+| Closing lines | ESPN scoreboard odds | Cover%/over% + light pace calibration |
+
+Use `--no-enrich` to skip last-N / PtDefend / lineups / SoS / clutch.
 
 ### Arguments
 
@@ -124,7 +138,7 @@ Live odds feeds are not wired; pass lines via flags or `--lines-csv` for slate.
 | `--slate-date` | slate mode | Full slate for `YYYY-MM-DD` (US/Eastern) |
 | `--date` | no | Tip `YYYY-MM-DD` (single game); priors through **D−1** |
 | `--season` | no | Season label (default **`2026-27`**) |
-| `--season-type` | no | `Regular Season` / `Playoffs` / `Pre Season` (default from tip date) |
+| `--season-type` | no | `Regular Season` / `Playoffs` / `Pre Season` / `IST` (from tip date) |
 | `--n` | no | Simulations per game (default 5000; max 200000) |
 | `--seed` | no | RNG seed |
 | `--json` | no | Machine-readable JSON output |
@@ -134,9 +148,11 @@ Live odds feeds are not wired; pass lines via flags or `--lines-csv` for slate.
 | `--no-rest` | no | Disable B2B check when tip date is set |
 | `--no-cache` | no | Bypass on-disk API cache (matchup + endpoint) |
 | `--no-fallback` | no | Current-season priors only |
-| `--injuries` / `--no-injuries` | no | ESPN injuries (default **on** live) |
+| `--no-enrich` | no | Skip v0.6 enrichment wave |
+| `--no-live-lines` | no | Skip ESPN closing-odds auto-pull |
+| `--injuries` / `--no-injuries` | no | Multi-source ESPN injuries (default **on** live) |
 | `--injuries-csv` | no | Injury CSV override |
-| `--spread` / `--total` | no | Home spread / game total |
+| `--spread` / `--total` | no | Home spread / game total (override live odds) |
 | `--lines-csv` | no | Slate lines: `away,home,spread,total` |
 | `--check-data` / `doctor` | no | Verify connectivity to each live source |
 | `--fixtures` | no | **Offline smoke only** — not live 2026-27 |
@@ -154,11 +170,13 @@ On live loads the sim also pulls:
 | **Four Factors** | `LeagueDashTeamStats` Four Factors | eFG/TOV%/OREB%/FTR (+opp) → FG, TOV, OREB, fouls |
 | **Shot zones** | `LeagueDashTeamShotLocations` | Rim rate + corner-3 → FG2/FG3 / 3PA tilt |
 | Hustle | `LeagueHustleStatsTeam` | Deflections → TOV; contested → FG |
-| PtDefend | `LeagueDashPtTeamDefend` | Rim / 3PT / overall D_FG → FG2/FG3 |
+| PtDefend (team) | `LeagueDashPtTeamDefend` | Rim / 3PT / overall D_FG → FG2/FG3 |
+| PtDefend (player) | `LeagueDashPtDefend` | Minutes-weighted contest on finish |
+| Last-N / lineups / clutch / SoS | see v0.6 table | Rotation, nets, clutch FG, opp-adj |
 | Head coach + style | `TeamInfoCommon` + pace/3PAR/DRtg | 3PA tilt, TOV pressure, pace notes |
 | Rest / travel / altitude | Yesterday slate + arena coords; DEN home | B2B, miles fatigue, DEN 3P/pace |
 | Early S2D shrink | Team GP from dashboards | Pace/ORtg/DRtg → league when GP&lt;12 |
-| Injuries | ESPN site (+ core fallback); default **on** live | Out/Doubtful→0; Q→×0.5; `--no-injuries` to skip |
+| Injuries | ESPN multi-source; default **on** live | Out/Doubtful/Inactive→0; Q→×0.5 |
 
 Styles are derived (push-pace / grind / live-by-three / paint-first / defense-first), not a full playbook database. Report prints **Matchup context** + calibration flags.
 

@@ -264,6 +264,7 @@ def _build_context(
         build_positional_defense,
         hustle_contest_multiplier,
         hustle_tov_multiplier,
+        player_pt_defend_team_multipliers,
         positional_fg_multipliers,
         pt_defend_fg_multipliers,
         pt_defend_from_team,
@@ -376,8 +377,10 @@ def _build_context(
     )
 
     pt_fg2 = pt_fg3 = 1.0
+    ppt_fg2 = ppt_fg3 = 1.0
     if opp_team is not None:
         pt_fg2, pt_fg3 = pt_defend_fg_multipliers(pt_defend_from_team(opp_team))
+        ppt_fg2, ppt_fg3 = player_pt_defend_team_multipliers(opp_team)
 
     own_ff = four_factors_from_team(team)
     ff_fg2, ff_fg3 = four_factor_fg_multipliers(own_ff)
@@ -431,6 +434,8 @@ def _build_context(
             pos_fg2, pos_fg3 = positional_fg_multipliers(
                 p, float(getattr(p, "height_in", 0.0) or 0.0), opp_pos_def
             )
+        clutch_m = float(getattr(p, "clutch_fg_mult", 1.0) or 1.0)
+        clutch_m = _clip(clutch_m, 0.97, 1.03)
         fg2_p = _clip(
             fg2_p
             * shot_adj
@@ -439,9 +444,11 @@ def _build_context(
             * pos_fg2
             * opp_contest
             * pt_fg2
+            * ppt_fg2
             * ff_fg2
             * opp_ff2
-            * rim_m,
+            * rim_m
+            * clutch_m,
             FG_FLOOR,
             FG_CEIL,
         )
@@ -452,9 +459,11 @@ def _build_context(
             * pos_fg3
             * opp_contest
             * pt_fg3
+            * ppt_fg3
             * ff_fg3
             * opp_ff3
             * c3_fg
+            * clutch_m
             + alt_3,
             FG3_FLOOR,
             FG3_CEIL,
