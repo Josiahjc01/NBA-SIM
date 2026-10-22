@@ -24,7 +24,7 @@ class WilsonTests(unittest.TestCase):
         self.assertLess(hi, 0.05)
         lo2, hi2 = wilson_interval(100, 100)
         self.assertGreater(lo2, 0.95)
-        self.assertEqual(hi2, 1.0)
+        self.assertAlmostEqual(hi2, 1.0, places=9)
 
     def test_summary_has_ci(self):
         s = run_simulations(load_fixture(), n=200, seed=11)

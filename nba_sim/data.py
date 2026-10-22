@@ -51,7 +51,7 @@ def set_quiet(quiet: bool) -> None:
 
 def _say(msg: str) -> None:
     if not _QUIET:
-        _say(msg)
+        print(msg)  # noqa: T201 — intentional console logger
 
 
 @dataclass
