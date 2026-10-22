@@ -6,12 +6,13 @@ This package defaults to **live 2026-27** season-to-date rosters and stats from 
 
 1. **Python 3.10+**
 2. **Outbound HTTPS** to `stats.nba.com` (and CDN as used by `nba_api`)
-3. Clone or open this repo, then install deps from `requirements.txt`
+3. Unzip this archive, then install deps from `sim/requirements.txt`
 
 ## Install
 
 ```bash
-cd nba-sim
+unzip nba-sim-grok.zip -d nba-sim
+cd nba-sim/sim
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
@@ -20,16 +21,17 @@ pip install -r requirements.txt
 ## Run a matchup (live 2026-27)
 
 ```bash
+cd nba-sim/sim
 source .venv/bin/activate
-python -m nba_sim --home SAC --away LAC --n 5000
+PYTHONPATH=. python -m nba_sim --home SAC --away LAC --n 5000
 ```
 
 Other examples:
 
 ```bash
-python -m nba_sim --home Kings --away Clippers --n 5000
-python -m nba_sim --home SAC --away LAC --date 2026-10-22 --n 5000
-python simulate.py --home SAC --away LAC --n 5000 --season 2026-27
+PYTHONPATH=. python -m nba_sim --home Kings --away Clippers --n 5000
+PYTHONPATH=. python -m nba_sim --home SAC --away LAC --date 2026-10-22 --n 5000
+PYTHONPATH=. python simulate.py --home SAC --away LAC --n 5000 --season 2026-27
 ```
 
 Expected log lines on success:
@@ -41,21 +43,18 @@ Expected log lines on success:
 
 If live fetch fails, the CLI **errors** (no silent fixture swap). Fix network / retry. Only then consider `--fixtures` for debugging the sim engine itself.
 
-## Layout
+## Layout in this zip
 
 ```
-README.md
-requirements.txt
-simulate.py
-nba_sim/                    ← package
+GROK_RUN.md                 ← this file
+sim/                        ← code, requirements.txt, README.md
 docs/sim-plan.md
 docs/realism-audit.md
 docs/project-context.md
-docs/GROK_RUN.md            ← this file
 ```
 
 ## Notes
 
 - `--date YYYY-MM-DD` → priors through **D−1** only (pre-tip; no that-game box score).
 - Default season constant: `2026-27` (`nba_sim.season.CURRENT_SEASON`).
-- Cache: `.cache/` at repo root (safe to delete; TTL ~6h).
+- Cache: `sim/.cache/` (safe to delete; TTL ~6h).

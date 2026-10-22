@@ -51,10 +51,10 @@ We **never** fetch that game’s box score or final score to calibrate or “pre
 
 ### Rate limits & caching
 
-- On-disk cache: `.cache/` at repo root, key includes season, teams, and `asof_*` (TTL 12h).
+- On-disk cache: `sim/.cache/`, key includes season, teams, and `asof_*` (TTL 12h).
 - ~0.65s pause between live calls.
 - Optional offline only: `--fixtures` → `nba_sim/fixtures/sac_lac.json` (outdated; bannered). **Not** used on live failure.
-- **Cloud Agent note:** some build environments time out on `stats.nba.com`. Any host with NBA Stats access should run the default live path. See [GROK_RUN.md](./GROK_RUN.md).
+- **Cloud Agent note:** this build environment timed out on `stats.nba.com`. Grok Bot (or any host with NBA Stats access) should run the default live path. See `GROK_RUN.md` in the zip.
 
 ## Simulation model
 

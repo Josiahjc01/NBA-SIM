@@ -1,6 +1,6 @@
 # Realism audit (v1)
 
-Concrete pass over `nba_sim/` for data leaks, bias, and accounting inconsistencies. Findings below were fixed in code unless marked residual.
+Concrete pass over `/cursor/stores/self/sim/nba_sim/` for data leaks, bias, and accounting inconsistencies. Findings below were fixed in code unless marked residual.
 
 ## 1. Data leaks
 
