@@ -162,7 +162,7 @@ def test_calibrated_defaults_and_market_report():
 def test_version_blendv10():
     from nba_sim import __version__
     from nba_sim.data import MATCHUP_CACHE_SCHEMA
-    assert __version__ == "1.0.1"
+    assert __version__ == "1.0.2"
     assert MATCHUP_CACHE_SCHEMA == "blendv10"
 
 
@@ -170,10 +170,13 @@ def test_version_blendv10():
 def test_enrich_date_to_matches_core_mmddyyyy():
     """Anti-leak C1: enrich DateTo must match data._date_to_param (not ISO)."""
     from nba_sim.data import _date_to_param, prior_cutoff
+    from nba_sim.schedule import today_eastern
 
-    tip = date(2026, 10, 22)
+    # Use a tip ≤ today so clamp does not change tip−1
+    tip = today_eastern()
     dto = _date_to_param(prior_cutoff(tip))
-    assert dto == "10/21/2026"
+    expect = (tip - __import__("datetime").timedelta(days=1)).strftime("%m/%d/%Y")
+    assert dto == expect
     assert dto != tip.isoformat()
     assert "-" not in (dto or "")
 
@@ -189,6 +192,44 @@ def test_undated_prior_cutoff_is_eastern_yesterday():
     assert cut == today_eastern() - timedelta(days=1)
     dto = _date_to_param(cut)
     assert dto is not None and "/" in dto and "-" not in dto
+
+
+def test_future_tip_date_to_clamped_to_eastern_yesterday():
+    """Future --date must not DateTo=today/future (stats.nba.com hang)."""
+    from datetime import timedelta
+
+    from nba_sim.data import _date_to_param, prior_cutoff
+    from nba_sim.schedule import today_eastern
+
+    tip = today_eastern() + timedelta(days=1)
+    cut = prior_cutoff(tip)
+    assert cut == today_eastern() - timedelta(days=1)
+    assert cut < tip
+    dto = _date_to_param(cut)
+    assert dto == cut.strftime("%m/%d/%Y")
+
+
+def test_near_tip_for_inactives_skips_future_calendar():
+    from datetime import timedelta
+
+    from nba_sim.nba_official import near_tip_for_inactives
+    from nba_sim.schedule import today_eastern
+
+    assert near_tip_for_inactives(today_eastern()) is True
+    assert near_tip_for_inactives(today_eastern() + timedelta(days=1)) is False
+
+
+def test_espn_core_injuries_url_not_probed():
+    import inspect
+
+    import nba_sim.injuries as inj
+
+    assert not hasattr(inj, "ESPN_CORE_INJURIES_URL")
+    assert not hasattr(inj, "_parse_core_injuries")
+    # fetch_multi_source_injuries body must not soft_fetch a core URL
+    body = inspect.getsource(inj.fetch_multi_source_injuries)
+    assert "core.api.espn.com" not in body
+    assert "espn-core" not in body
 
 
 def test_residual_defense_mult_clips_soft_d_stack():

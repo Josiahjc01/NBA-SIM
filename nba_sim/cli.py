@@ -157,8 +157,8 @@ def build_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=None,
         help=(
-            "Multi-source ESPN injuries (site+core+team+scoreboard; "
-            "Out/Doubtful/Inactive→0 min, Questionable→×0.5). "
+            "Multi-source ESPN injuries (site+team+scoreboard; "
+            "Out/Doubtful/Inactive→0 min, Questionable→×0.5; core API dropped). "
             "Default: on for live, off for --fixtures. Use --no-injuries to skip."
         ),
     )
@@ -333,20 +333,30 @@ def _run_one_matchup(
 
     officials = getattr(matchup, "_pre_tip_officials", None)
     if not force_fx and game_date is not None and officials is None:
-        # Injuries skipped — still try official crew
+        # Injuries skipped / far-future tip — try official crew only near tip
         try:
-            from nba_sim.nba_official import fetch_pre_tip_game_context
-
-            ctx = fetch_pre_tip_game_context(
-                game_date,
-                home_team_id=int(matchup.home.team_id),
-                away_team_id=int(matchup.away.team_id),
-                use_cache=not args.no_cache,
+            from nba_sim.nba_official import (
+                fetch_pre_tip_game_context,
+                near_tip_for_inactives,
             )
-            officials = ctx.officials
-            for n in ctx.notes:
-                if "official" in n.lower() or "nba-inactive" in n or "nba-cdn" in n:
-                    _log(args, f"  nba: {n}")
+
+            if not near_tip_for_inactives(game_date):
+                _log(
+                    args,
+                    f"  nba: tip {game_date.isoformat()} not near — "
+                    "skipped BoxScoreSummary officials",
+                )
+            else:
+                ctx = fetch_pre_tip_game_context(
+                    game_date,
+                    home_team_id=int(matchup.home.team_id),
+                    away_team_id=int(matchup.away.team_id),
+                    use_cache=not args.no_cache,
+                )
+                officials = ctx.officials
+                for n in ctx.notes:
+                    if "official" in n.lower() or "nba-inactive" in n or "nba-cdn" in n:
+                        _log(args, f"  nba: {n}")
         except Exception as exc:  # noqa: BLE001
             _log(args, f"  refs: crew fetch failed ({exc})")
     rnotes_ref = apply_ref_tendencies(matchup, officials)

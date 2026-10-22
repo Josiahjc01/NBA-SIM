@@ -22,7 +22,7 @@ class WagerPick:
     market: str  # ml | spread | total | player_pts
     selection: str
     lean_pct: float  # 0–1 sim probability or proxy
-    edge_pp: float  # vs 50% (or vs market when known)
+    edge_pp: float | None  # vs de-vigged market; None = no market (no fake %)
     detail: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -35,142 +35,283 @@ class WagerPick:
         }
 
 
+def _norm_player(name: str) -> str:
+    s = (name or "").lower().strip()
+    for ch in (".", "'", "-"):
+        s = s.replace(ch, " " if ch == "-" else "")
+    return " ".join(s.split())
+
+
+def _match_prop(name: str, props: list) -> Any | None:
+    from nba_sim.lines import PlayerPropLine
+
+    nn = _norm_player(name)
+    best = None
+    for p in props:
+        if not isinstance(p, PlayerPropLine):
+            continue
+        pn = _norm_player(p.name)
+        if not pn:
+            continue
+        if nn == pn or nn in pn or pn in nn:
+            return p
+        # last-name match
+        nt, pt = nn.split(), pn.split()
+        if nt and pt and nt[-1] == pt[-1] and (
+            nt[0][:1] == pt[0][:1] if nt and pt else False
+        ):
+            best = best or p
+    return best
+
+
 def build_top_wagers(summary: SimSummary, *, n: int = 5) -> list[WagerPick]:
     """
     Rank ML / spread / total / player-pts leans from sim output.
 
-    Uses market spread/total when present on `summary.line_probs` for cover/over
-    leans. Does **not** invent odds or alternate books — player rows are sim
-    mean PTS leaders (informational leans).
+    Edge = sim% − de-vigged market implied% when book prices exist.
+    If no line/prices: keep the lean labeled **no market** (edge_pp=None) —
+    never invent 50% / 224.5 fake edges. Always return up to `n` picks when
+    enough candidates exist (pads with additional player leans).
     """
-    cands: list[WagerPick] = []
+    from nba_sim.lines import prop_over_prob
 
-    # Moneyline
+    cands: list[WagerPick] = []
+    lp = summary.line_probs
+    gl = getattr(summary, "game_lines", None)
+
+    # --- Moneyline ---
+    home_mkt = getattr(lp, "home_ml_mkt", None) if lp is not None else None
+    away_mkt = getattr(lp, "away_ml_mkt", None) if lp is not None else None
+    if home_mkt is None and gl is not None:
+        from nba_sim.lines import devig_two_way
+
+        home_mkt, away_mkt = devig_two_way(gl.home_ml, gl.away_ml)
+
     if summary.home_win_pct >= summary.away_win_pct:
         lean = float(summary.home_win_pct)
         sel = f"{summary.home_abbr} ML"
+        mkt = home_mkt
     else:
         lean = float(summary.away_win_pct)
         sel = f"{summary.away_abbr} ML"
-    cands.append(
-        WagerPick(
-            market="ml",
-            selection=sel,
-            lean_pct=lean,
-            edge_pp=100.0 * (lean - 0.5),
-            detail="sim win%",
+        mkt = away_mkt
+    if mkt is not None:
+        cands.append(
+            WagerPick(
+                market="ml",
+                selection=sel,
+                lean_pct=lean,
+                edge_pp=100.0 * (lean - float(mkt)),
+                detail=f"sim win% vs de-vig ML ({100 * float(mkt):.1f}% mkt)",
+            )
         )
-    )
+    else:
+        cands.append(
+            WagerPick(
+                market="ml",
+                selection=sel,
+                lean_pct=lean,
+                edge_pp=None,
+                detail="no market — sim win% only",
+            )
+        )
 
-    lp = summary.line_probs
+    # --- Spread ---
     if lp is not None and lp.spread is not None and lp.home_cover_pct is not None:
         hc = float(lp.home_cover_pct)
         ac = float(lp.away_cover_pct or (1.0 - hc - float(lp.spread_push_pct or 0)))
+        hm = getattr(lp, "home_cover_mkt", None)
+        am = getattr(lp, "away_cover_mkt", None)
+        if hm is None and gl is not None:
+            from nba_sim.lines import devig_two_way
+
+            hm, am = devig_two_way(gl.spread_home_odds, gl.spread_away_odds)
         if hc >= ac:
+            edge = 100.0 * (hc - float(hm)) if hm is not None else None
+            detail = (
+                f"sim cover% vs de-vig spread ({100 * float(hm):.1f}% mkt)"
+                if hm is not None
+                else "no market prices on spread — sim cover% only"
+            )
             cands.append(
                 WagerPick(
                     market="spread",
                     selection=f"{summary.home_abbr} {lp.spread:+.1f}",
                     lean_pct=hc,
-                    edge_pp=100.0 * (hc - 0.5),
-                    detail="sim cover% vs market spread",
+                    edge_pp=edge,
+                    detail=detail,
                 )
             )
         else:
-            # Away cover = taking the other side of home line
             away_line = -float(lp.spread)
+            edge = 100.0 * (ac - float(am)) if am is not None else None
+            detail = (
+                f"sim cover% vs de-vig spread ({100 * float(am):.1f}% mkt)"
+                if am is not None
+                else "no market prices on spread — sim cover% only"
+            )
             cands.append(
                 WagerPick(
                     market="spread",
                     selection=f"{summary.away_abbr} {away_line:+.1f}",
                     lean_pct=ac,
-                    edge_pp=100.0 * (ac - 0.5),
-                    detail="sim cover% vs market spread",
+                    edge_pp=edge,
+                    detail=detail,
                 )
             )
+    else:
+        cands.append(
+            WagerPick(
+                market="spread",
+                selection=f"{summary.home_abbr}/{summary.away_abbr} spread",
+                lean_pct=max(float(summary.home_win_pct), float(summary.away_win_pct)),
+                edge_pp=None,
+                detail="no market",
+            )
+        )
 
+    # --- Total ---
     if lp is not None and lp.total is not None and lp.over_pct is not None:
         ov = float(lp.over_pct)
         un = float(lp.under_pct or (1.0 - ov - float(lp.total_push_pct or 0)))
+        om = getattr(lp, "over_mkt", None)
+        um = getattr(lp, "under_mkt", None)
+        if om is None and gl is not None:
+            from nba_sim.lines import devig_two_way
+
+            om, um = devig_two_way(gl.over_odds, gl.under_odds)
         if ov >= un:
+            edge = 100.0 * (ov - float(om)) if om is not None else None
+            detail = (
+                f"sim mean {summary.mean_total:.1f} vs de-vig over "
+                f"({100 * float(om):.1f}% mkt)"
+                if om is not None
+                else f"sim mean total {summary.mean_total:.1f} — no market prices"
+            )
             cands.append(
                 WagerPick(
                     market="total",
                     selection=f"OVER {lp.total:.1f}",
                     lean_pct=ov,
-                    edge_pp=100.0 * (ov - 0.5),
-                    detail=f"sim mean total {summary.mean_total:.1f}",
+                    edge_pp=edge,
+                    detail=detail,
                 )
             )
         else:
+            edge = 100.0 * (un - float(um)) if um is not None else None
+            detail = (
+                f"sim mean {summary.mean_total:.1f} vs de-vig under "
+                f"({100 * float(um):.1f}% mkt)"
+                if um is not None
+                else f"sim mean total {summary.mean_total:.1f} — no market prices"
+            )
             cands.append(
                 WagerPick(
                     market="total",
                     selection=f"UNDER {lp.total:.1f}",
                     lean_pct=un,
-                    edge_pp=100.0 * (un - 0.5),
-                    detail=f"sim mean total {summary.mean_total:.1f}",
+                    edge_pp=edge,
+                    detail=detail,
                 )
             )
     else:
-        # No market total — still surface total lean vs league-ish 224.5 midpoint
-        mid = 224.5
-        if summary.mean_total >= mid:
-            cands.append(
-                WagerPick(
-                    market="total",
-                    selection=f"OVER lean (~{summary.mean_total:.1f})",
-                    lean_pct=min(0.65, 0.50 + (summary.mean_total - mid) / 80.0),
-                    edge_pp=min(15.0, summary.mean_total - mid),
-                    detail="no market total — sim mean vs 224.5 ref",
-                )
-            )
-        else:
-            cands.append(
-                WagerPick(
-                    market="total",
-                    selection=f"UNDER lean (~{summary.mean_total:.1f})",
-                    lean_pct=min(0.65, 0.50 + (mid - summary.mean_total) / 80.0),
-                    edge_pp=min(15.0, mid - summary.mean_total),
-                    detail="no market total — sim mean vs 224.5 ref",
-                )
-            )
-
-    # Player points leaders (sim means; not priced props)
-    scorers: list[tuple[str, str, float]] = []
-    for p in summary.home_players or []:
-        scorers.append((summary.home_abbr, str(p.get("name") or "?"), float(p.get("pts") or 0)))
-    for p in summary.away_players or []:
-        scorers.append((summary.away_abbr, str(p.get("name") or "?"), float(p.get("pts") or 0)))
-    scorers.sort(key=lambda x: x[2], reverse=True)
-    for abbr, name, pts in scorers[:3]:
-        if pts < 12:
-            continue
-        # Proxy lean: chance to be top scorer / clear 20+ — informational
-        lean = min(0.72, 0.40 + pts / 80.0)
         cands.append(
             WagerPick(
-                market="player_pts",
-                selection=f"{abbr} {name} pts",
-                lean_pct=lean,
-                edge_pp=pts - 20.0,
-                detail=f"sim avg {pts:.1f} pts (unpriced)",
+                market="total",
+                selection=f"total lean (~{summary.mean_total:.1f})",
+                lean_pct=0.5,
+                edge_pp=None,
+                detail="no market",
             )
         )
 
-    # Rank by |edge| then lean; keep one per market family preference then fill
-    cands.sort(key=lambda w: (abs(w.edge_pp), w.lean_pct), reverse=True)
-    # Prefer diversity: at most 2 player_pts in top 5
+    # --- Player points (priced props when feed has them; else no market) ---
+    props = list(getattr(gl, "player_props", None) or [])
+    scorers: list[tuple[str, str, float]] = []
+    for p in summary.home_players or []:
+        scorers.append(
+            (summary.home_abbr, str(p.get("name") or "?"), float(p.get("pts") or 0))
+        )
+    for p in summary.away_players or []:
+        scorers.append(
+            (summary.away_abbr, str(p.get("name") or "?"), float(p.get("pts") or 0))
+        )
+    scorers.sort(key=lambda x: x[2], reverse=True)
+    for abbr, name, pts in scorers[:8]:
+        if pts < 10:
+            continue
+        prop = _match_prop(name, props)
+        if prop is not None:
+            from nba_sim.lines import devig_two_way
+
+            over_p = prop_over_prob(pts, float(prop.line))
+            om, um = devig_two_way(prop.over_odds, prop.under_odds)
+            if over_p >= 0.5:
+                mkt = om
+                sel = f"{abbr} {name} OVER {prop.line:g}"
+                lean = over_p
+            else:
+                mkt = um
+                sel = f"{abbr} {name} UNDER {prop.line:g}"
+                lean = 1.0 - over_p
+            edge = 100.0 * (lean - float(mkt)) if mkt is not None else None
+            detail = (
+                f"sim avg {pts:.1f} vs line {prop.line:g} "
+                f"(de-vig mkt {100 * float(mkt):.1f}%)"
+                if mkt is not None
+                else f"sim avg {pts:.1f} vs line {prop.line:g} — no market prices"
+            )
+            cands.append(
+                WagerPick(
+                    market="player_pts",
+                    selection=sel,
+                    lean_pct=lean,
+                    edge_pp=edge,
+                    detail=detail,
+                )
+            )
+        else:
+            # Threshold lean vs floor(mean)−0.5 — informational, no fake edge
+            thr = max(0.5, float(int(pts)) - 0.5)
+            lean = prop_over_prob(pts, thr)
+            cands.append(
+                WagerPick(
+                    market="player_pts",
+                    selection=f"{abbr} {name} OVER {thr:g}",
+                    lean_pct=lean,
+                    edge_pp=None,
+                    detail=f"sim avg {pts:.1f} pts — no market",
+                )
+            )
+
+    # Rank: priced edges first by |edge|, then no-market by lean strength
+    def _rank_key(w: WagerPick) -> tuple:
+        priced = 1 if w.edge_pp is not None else 0
+        return (priced, abs(w.edge_pp or 0.0), w.lean_pct)
+
+    cands.sort(key=_rank_key, reverse=True)
+
+    # Prefer diversity but pad to n when enough candidates exist
     out: list[WagerPick] = []
     n_player = 0
+    max_player = max(2, n - 3)  # allow more players when filling to 5
     for w in cands:
         if w.market == "player_pts":
-            if n_player >= 2:
+            if n_player >= max_player:
                 continue
             n_player += 1
         out.append(w)
         if len(out) >= n:
             break
+    # If still short and more player cands remain, fill
+    if len(out) < n:
+        have = {id(x) for x in out}
+        for w in cands:
+            if id(w) in have:
+                continue
+            out.append(w)
+            if len(out) >= n:
+                break
     return out
 
 
@@ -184,14 +325,19 @@ def format_top_wagers_block(summary: SimSummary, *, n: int = 5) -> list[str]:
         lines.append("  (none — insufficient sim summary)")
         return lines
     for i, w in enumerate(picks, 1):
+        if w.edge_pp is None:
+            edge_s = "no market"
+        else:
+            edge_s = f"edge {w.edge_pp:+.1f}pp"
         lines.append(
             f"  {i}. {w.selection:<32} lean {_pct(w.lean_pct):>6}  "
-            f"edge {w.edge_pp:+.1f}pp  [{w.market}]"
+            f"{edge_s}  [{w.market}]"
         )
         if w.detail:
             lines.append(f"      {w.detail}")
     lines.append(
-        "  (Sim leans only — no invented book odds; market spread/total used when provided.)"
+        "  (Sim leans vs de-vigged market when priced; "
+        "'no market' = no fake edge %.)"
     )
     return lines
 

@@ -30,7 +30,7 @@ python -m nba_sim doctor
 If required feeds fail: raise timeouts/retries, then retry.
 
 ```bash
-export NBA_SIM_TIMEOUT=120 NBA_SIM_RETRIES=6 NBA_SIM_PAUSE=0.7
+export NBA_SIM_TIMEOUT=60 NBA_SIM_RETRIES=4 NBA_SIM_PAUSE=0.7
 python -m nba_sim doctor
 ```
 

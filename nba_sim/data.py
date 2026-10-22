@@ -229,12 +229,18 @@ def prior_cutoff(game_date: date | None) -> date | None:
     Undated live runs (`game_date is None`) → Eastern **yesterday** so
     evening re-sims of a finished tip cannot pull tip-inclusive S2D
     (audit High H1). Never tip-day boxes.
-    """
-    if game_date is None:
-        from nba_sim.schedule import today_eastern
 
-        return today_eastern() - timedelta(days=1)
-    return game_date - timedelta(days=1)
+    Future tips: clamp to Eastern yesterday so LeagueDash `DateTo` never
+    targets "today"/future (stats.nba.com often hangs on those DateTo
+    values — live-run hang with `--date` for tomorrow's tip).
+    """
+    from nba_sim.schedule import today_eastern
+
+    latest_safe = today_eastern() - timedelta(days=1)
+    if game_date is None:
+        return latest_safe
+    tip_minus_1 = game_date - timedelta(days=1)
+    return min(tip_minus_1, latest_safe)
 
 
 def _date_to_param(cutoff: date | None) -> str | None:
@@ -1368,7 +1374,7 @@ def _unwrap_parallel(result: Any, label: str, *, required: bool) -> Any:
         if required:
             raise RuntimeError(
                 f"Required feed '{label}' failed: {result}\n"
-                f"Tips: retry later; raise NBA_SIM_TIMEOUT (default 90); "
+                f"Tips: retry later; raise NBA_SIM_TIMEOUT (default 30); "
                 f"check `python -m nba_sim doctor`; ensure HTTPS to stats.nba.com; "
                 f"or pass --fixtures ONLY for offline smoke."
             ) from result

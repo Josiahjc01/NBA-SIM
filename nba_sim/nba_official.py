@@ -16,13 +16,16 @@ import json
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from nba_sim.httputil import endpoint_kwargs, soft_fetch, with_retries
 
 # GAME_STATUS_ID: 1=scheduled, 2=in progress, 3=final (NBA Stats convention)
 _STATUS_FINAL_TOKENS = ("final", "end of", "ppd", "postponed", "canceled", "cancelled")
+
+# Only hit BoxScoreSummary for inactives when tip is imminent (or tip day).
+INACTIVE_LOOKAHEAD_HOURS = 6
 
 _UA_NBA = {
     "User-Agent": (
@@ -68,6 +71,32 @@ class OfficialGameContext:
 def _status_is_final(status: str) -> bool:
     s = (status or "").lower()
     return any(tok in s for tok in _STATUS_FINAL_TOKENS)
+
+
+def near_tip_for_inactives(
+    tip: date,
+    *,
+    tip_utc: datetime | None = None,
+    now: datetime | None = None,
+    lookahead_hours: float = INACTIVE_LOOKAHEAD_HOURS,
+) -> bool:
+    """
+    Whether to call BoxScoreSummary InactivePlayers / Officials.
+
+    Skip for calendar-future tips until within `lookahead_hours` of tip
+    (or tip day when only a date is known). Avoids hanging ScoreboardV2 /
+    BoxScoreSummary probes for tomorrow's games.
+    """
+    from nba_sim.schedule import today_eastern
+
+    if tip_utc is not None:
+        tip_aware = tip_utc if tip_utc.tzinfo else tip_utc.replace(tzinfo=timezone.utc)
+        clock = now or datetime.now(timezone.utc)
+        if clock.tzinfo is None:
+            clock = clock.replace(tzinfo=timezone.utc)
+        return tip_aware <= clock + timedelta(hours=float(lookahead_hours))
+    # Date-only: allow tip ≤ today Eastern; skip strictly future calendar tips.
+    return tip <= today_eastern()
 
 
 def _http_json(url: str, *, timeout: float = 20.0, headers: dict | None = None) -> Any:

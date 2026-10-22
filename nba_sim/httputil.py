@@ -1,11 +1,14 @@
 """Shared HTTP helpers for NBA Stats / ESPN.
 
 Tunables via env (all optional):
-  NBA_SIM_TIMEOUT     — seconds per request (default 90)
-  NBA_SIM_RETRIES     — hard retries for required feeds (default 5)
+  NBA_SIM_TIMEOUT     — seconds per request (default 30)
+  NBA_SIM_RETRIES     — hard retries for required feeds (default 3)
   NBA_SIM_PAUSE       — pause before each live call (default 0.55)
   NBA_SIM_CACHE_TTL   — endpoint cache TTL seconds (default 21600 = 6h)
   NBA_SIM_MAX_WORKERS — parallel fetch workers (default 4)
+
+Defaults keep a single bad endpoint from stalling a live run for many
+minutes (previously 90s × 5 retries). Raise via env when the CDN is slow.
 """
 
 from __future__ import annotations
@@ -21,8 +24,8 @@ from typing import Any, Callable, TypeVar
 
 T = TypeVar("T")
 
-API_TIMEOUT = int(os.environ.get("NBA_SIM_TIMEOUT", "90"))
-API_RETRIES = int(os.environ.get("NBA_SIM_RETRIES", "5"))
+API_TIMEOUT = int(os.environ.get("NBA_SIM_TIMEOUT", "30"))
+API_RETRIES = int(os.environ.get("NBA_SIM_RETRIES", "3"))
 REQUEST_PAUSE = float(os.environ.get("NBA_SIM_PAUSE", "0.55"))
 ENDPOINT_CACHE_TTL = int(os.environ.get("NBA_SIM_CACHE_TTL", str(6 * 60 * 60)))
 MAX_WORKERS = max(1, int(os.environ.get("NBA_SIM_MAX_WORKERS", "4")))

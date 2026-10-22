@@ -3,14 +3,15 @@
 Sources (live, merged by name+team; more severe status wins):
   1. ESPN site API (primary league-wide)
      https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries
-  2. ESPN core sports API (fallback / merge)
-     https://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/injuries
-  3. ESPN per-team injury pages for the two clubs in the matchup
-  4. ESPN scoreboard competitor injury snippets for tip-day slate (status only)
+  2. ESPN per-team injury pages for the two clubs in the matchup
+  3. ESPN scoreboard competitor injury snippets for tip-day slate (status only)
 
-NBA.com CDN injury / liveData endpoints return 403 in many environments —
-documented in doctor; we do not scrape post-tip boxscore inactive lists
-(same-game leak).
+ESPN core (`sports.core.api.espn.com/.../injuries`) permanently 404s — dropped
+(no probe / no 404 noise). NBA.com CDN injury / liveData often 403 — doctor
+documents; we do not scrape post-tip boxscore inactive lists (same-game leak).
+
+Pre-tip NBA InactivePlayers (BoxScoreSummary) only when tip is near
+(see `nba_official.near_tip_for_inactives`).
 
 Status mapping: Out/Doubtful/Suspended/IR → 0 min; Questionable → 50%;
 Day-to-day → 75%; Probable/Available → 100%.
@@ -32,10 +33,6 @@ from nba_sim.httputil import soft_fetch
 
 ESPN_INJURIES_URL = (
     "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries"
-)
-ESPN_CORE_INJURIES_URL = (
-    "https://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/injuries"
-    "?limit=200"
 )
 ESPN_SCOREBOARD_URL = (
     "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
@@ -182,43 +179,6 @@ def _parse_site_injuries(payload: dict, *, source: str = "espn-site") -> list[In
     return entries
 
 
-def _parse_core_injuries(payload: dict) -> list[InjuryEntry]:
-    entries: list[InjuryEntry] = []
-    items = payload.get("items") or payload.get("entries") or []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        if "$ref" in item and "athlete" not in item:
-            continue
-        athlete = item.get("athlete") or {}
-        name = str(
-            athlete.get("displayName")
-            or athlete.get("fullName")
-            or item.get("displayName")
-            or ""
-        )
-        status = str(
-            item.get("status")
-            or (item.get("type") or {}).get("description")
-            or ""
-        )
-        team = item.get("team") or {}
-        abbr = str(team.get("abbreviation") or "").upper()
-        if not name:
-            continue
-        entries.append(
-            InjuryEntry(
-                name=name,
-                team_abbr=abbr,
-                status=status,
-                mult=_status_mult(status),
-                detail="",
-                source="espn-core",
-            )
-        )
-    return entries
-
-
 def _parse_team_injury_page(payload: dict, abbr: str) -> list[InjuryEntry]:
     """Per-team ESPN injury endpoint — shape varies; best-effort."""
     entries: list[InjuryEntry] = []
@@ -319,8 +279,9 @@ def fetch_multi_source_injuries(
     timeout: float = 25.0,
 ) -> InjuryFetchResult:
     """
-    Merge ESPN site + core + optional per-team + scoreboard.
+    Merge ESPN site + optional per-team + scoreboard.
     Never raises — failures land in sources_failed.
+    Does not probe the dead ESPN core injuries URL.
     """
     from nba_sim.httputil import read_endpoint_cache, write_endpoint_cache, with_retries
 
@@ -371,16 +332,6 @@ def fetch_multi_source_injuries(
                 for e in site_rows
             ],
         )
-
-    def secondary():
-        return _parse_core_injuries(_http_json(ESPN_CORE_INJURIES_URL, timeout=timeout))
-
-    core, err = soft_fetch("ESPN core injuries", secondary, retries=2, use_cache=False)
-    if core:
-        result.sources_ok.append(f"espn-core({len(core)})")
-        buckets.append(core)
-    elif err:
-        result.sources_failed.append(err)
 
     def scoreboard():
         return _parse_scoreboard_injuries(_http_json(ESPN_SCOREBOARD_URL, timeout=timeout))
@@ -556,22 +507,30 @@ def apply_injuries(
                 from nba_sim.nba_official import (
                     fetch_pre_tip_game_context,
                     inactives_as_injury_entries,
+                    near_tip_for_inactives,
                 )
 
-                ctx = fetch_pre_tip_game_context(
-                    tip,
-                    home_team_id=int(matchup.home.team_id),
-                    away_team_id=int(matchup.away.team_id),
-                    use_cache=use_cache,
-                )
-                notes.extend(ctx.notes)
-                if ctx.inactives:
-                    nba_rows = inactives_as_injury_entries(ctx.inactives)
-                    loaded.extend(nba_rows)
+                if not near_tip_for_inactives(tip):
                     notes.append(
-                        f"injuries NBA InactivePlayers merged ({len(nba_rows)} rows)"
+                        f"nba-inactive: tip {tip.isoformat()} not within "
+                        f"~6h / still future — skipped BoxScoreSummary "
+                        "(ESPN injuries still applied)"
                     )
-                matchup._pre_tip_officials = ctx.officials  # type: ignore[attr-defined]
+                else:
+                    ctx = fetch_pre_tip_game_context(
+                        tip,
+                        home_team_id=int(matchup.home.team_id),
+                        away_team_id=int(matchup.away.team_id),
+                        use_cache=use_cache,
+                    )
+                    notes.extend(ctx.notes)
+                    if ctx.inactives:
+                        nba_rows = inactives_as_injury_entries(ctx.inactives)
+                        loaded.extend(nba_rows)
+                        notes.append(
+                            f"injuries NBA InactivePlayers merged ({len(nba_rows)} rows)"
+                        )
+                    matchup._pre_tip_officials = ctx.officials  # type: ignore[attr-defined]
             except Exception as exc:  # noqa: BLE001
                 notes.append(f"nba-inactive fetch failed ({exc})")
         else:

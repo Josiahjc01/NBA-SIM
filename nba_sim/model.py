@@ -165,6 +165,7 @@ class SimSummary:
     audit: dict = field(default_factory=dict)
     mean_total: float = 0.0
     line_probs: LineProbabilities | None = None
+    game_lines: GameLines | None = None  # live/CLI book prices for Top 5 edges
     # Score distribution percentiles (p10/p50/p90) for home, away, total
     home_p10: float = 0.0
     home_p50: float = 0.0
@@ -814,12 +815,27 @@ def run_simulations(
     audit = _audit_batch(results[: min(200, n)], matchup)
 
     line_probs = None
-    if lines is not None and (lines.spread is not None or lines.total is not None):
+    if lines is not None and (
+        lines.spread is not None
+        or lines.total is not None
+        or lines.home_ml is not None
+        or lines.away_ml is not None
+    ):
         line_probs = compute_line_probs(
             home_scores,
             away_scores,
             spread=lines.spread,
             total=lines.total,
+            lines=lines,
+        )
+    elif lines is not None:
+        # Props / ML-only board — still attach de-vig ML if present
+        line_probs = compute_line_probs(
+            home_scores,
+            away_scores,
+            spread=None,
+            total=None,
+            lines=lines,
         )
 
     totals = home_scores + away_scores
@@ -849,6 +865,7 @@ def run_simulations(
         audit=audit,
         mean_total=float(totals.mean()),
         line_probs=line_probs,
+        game_lines=lines,
         home_p10=_pctile(home_scores, 10),
         home_p50=_pctile(home_scores, 50),
         home_p90=_pctile(home_scores, 90),
