@@ -89,7 +89,7 @@ def check_roster(season: str | None = None) -> CheckResult:
         "CommonTeamRoster",
         True,
         ok,
-        f"{n} players (SAC) season={season}" if ok else "empty roster",
+        f"{n} players (probe team) season={season}" if ok else "empty roster",
         ms,
     )
 
@@ -300,7 +300,8 @@ def run_doctor(
         print_lines.append(
             "Tips: export NBA_SIM_TIMEOUT=120 NBA_SIM_RETRIES=6; "
             "delete .cache/ if stale; retry off VPN; "
-            "`python -m nba_sim --home LAC --away SAC --n 5000` pulls all feeds."
+            "`python -m nba_sim --home BOS --away NYK --n 5000` pulls all feeds "
+            "(any of 30 teams)."
         )
         code = 1
     else:

@@ -45,7 +45,7 @@ CACHE_DIR = Path(__file__).resolve().parents[1] / ".cache"
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 CACHE_TTL_SECONDS = 6 * 60 * 60  # shorter so live S2D stays fresh
 # Matchup aggregate cache schema — bump when TeamSeason / blend inputs change.
-MATCHUP_CACHE_SCHEMA = "blendv7"
+MATCHUP_CACHE_SCHEMA = "blendv8"
 
 # When True, suppress informational prints (warnings for hard failures still raise).
 _QUIET = False
@@ -244,7 +244,7 @@ def _fetch_league_player_stats(
             }
         )
         # DateTo only for regular season (preseason is short; use full pre slate).
-        if date_to and season_type == "Regular Season":
+        if date_to and season_type in ("Regular Season", "Playoffs"):
             kwargs["date_to_nullable"] = date_to
         ep = leaguedashplayerstats.LeagueDashPlayerStats(**kwargs)
         return ep.get_normalized_dict()["LeagueDashPlayerStats"]
@@ -273,7 +273,7 @@ def _fetch_league_team_stats(
                 "season_type_all_star": season_type,
             }
         )
-        if date_to and season_type == "Regular Season":
+        if date_to and season_type in ("Regular Season", "Playoffs"):
             kwargs["date_to_nullable"] = date_to
         ep = leaguedashteamstats.LeagueDashTeamStats(**kwargs)
         return ep.get_normalized_dict()["LeagueDashTeamStats"]
@@ -303,7 +303,7 @@ def _fetch_league_player_advanced(
                 "season_type_all_star": season_type,
             }
         )
-        if date_to and season_type == "Regular Season":
+        if date_to and season_type in ("Regular Season", "Playoffs"):
             kwargs["date_to_nullable"] = date_to
         ep = leaguedashplayerstats.LeagueDashPlayerStats(**kwargs)
         return ep.get_normalized_dict()["LeagueDashPlayerStats"]
@@ -385,7 +385,7 @@ def _fetch_team_hustle(
                 "season_type_all_star": season_type,
             }
         )
-        if date_to and season_type == "Regular Season":
+        if date_to and season_type in ("Regular Season", "Playoffs"):
             kwargs["date_to_nullable"] = date_to
         ep = leaguehustlestatsteam.LeagueHustleStatsTeam(**kwargs)
         data = ep.get_normalized_dict()
@@ -406,17 +406,19 @@ def _fetch_pt_team_defend(
     date_to: str | None,
     *,
     defense_category: str = "Overall",
+    season_type: str = "Regular Season",
     use_cache: bool = True,
 ) -> list[dict[str, Any]]:
     """LeagueDashPtTeamDefend — defended FG% by shot category (optional feed)."""
     from nba_api.stats.endpoints import leaguedashptteamdefend
 
     label = (
-        f"LeagueDashPtTeamDefend({season},{defense_category},"
+        f"LeagueDashPtTeamDefend({season},{defense_category},{season_type},"
         f"to={date_to or 'latest'})"
     )
     safe_cat = defense_category.replace(" ", "_")
-    cache_key = f"ep_ptdefend_{season}_{safe_cat}_{date_to or 'latest'}"
+    safe_st = season_type.replace(" ", "")
+    cache_key = f"ep_ptdefend_{season}_{safe_cat}_{safe_st}_{date_to or 'latest'}"
 
     def call():
         kwargs: dict[str, Any] = endpoint_kwargs(
@@ -424,7 +426,7 @@ def _fetch_pt_team_defend(
                 "season": season,
                 "defense_category": defense_category,
                 "per_mode_simple": "PerGame",
-                "season_type_all_star": "Regular Season",
+                "season_type_all_star": season_type,
             }
         )
         if date_to:
@@ -499,13 +501,18 @@ def _fetch_league_team_four_factors(
     season: str,
     date_to: str | None,
     *,
+    season_type: str = "Regular Season",
     use_cache: bool = True,
 ) -> list[dict[str, Any]]:
     """LeagueDashTeamStats MeasureType=Four Factors."""
     from nba_api.stats.endpoints import leaguedashteamstats
 
-    label = f"LeagueDashTeamStats.FourFactors({season},to={date_to or 'latest'})"
-    cache_key = f"ep_team_ff_{season}_{date_to or 'latest'}"
+    label = (
+        f"LeagueDashTeamStats.FourFactors({season},{season_type},"
+        f"to={date_to or 'latest'})"
+    )
+    safe_st = season_type.replace(" ", "")
+    cache_key = f"ep_team_ff_{season}_{safe_st}_{date_to or 'latest'}"
 
     def call():
         kwargs: dict[str, Any] = endpoint_kwargs(
@@ -513,7 +520,7 @@ def _fetch_league_team_four_factors(
                 "season": season,
                 "per_mode_detailed": "PerGame",
                 "measure_type_detailed_defense": "Four Factors",
-                "season_type_all_star": "Regular Season",
+                "season_type_all_star": season_type,
             }
         )
         if date_to:
@@ -528,6 +535,7 @@ def _fetch_team_shot_locations(
     season: str,
     date_to: str | None,
     *,
+    season_type: str = "Regular Season",
     use_cache: bool = True,
 ) -> list[dict[str, Any]]:
     """
@@ -538,8 +546,12 @@ def _fetch_team_shot_locations(
     """
     from nba_api.stats.endpoints import leaguedashteamshotlocations
 
-    label = f"LeagueDashTeamShotLocations({season},to={date_to or 'latest'})"
-    cache_key = f"ep_team_shotloc_{season}_{date_to or 'latest'}"
+    label = (
+        f"LeagueDashTeamShotLocations({season},{season_type},"
+        f"to={date_to or 'latest'})"
+    )
+    safe_st = season_type.replace(" ", "")
+    cache_key = f"ep_team_shotloc_{season}_{safe_st}_{date_to or 'latest'}"
 
     def call():
         kwargs: dict[str, Any] = endpoint_kwargs(
@@ -548,7 +560,7 @@ def _fetch_team_shot_locations(
                 "distance_range": "By Zone",
                 "per_mode_detailed": "PerGame",
                 "measure_type_simple": "Base",
-                "season_type_all_star": "Regular Season",
+                "season_type_all_star": season_type,
             }
         )
         if date_to:
@@ -1348,13 +1360,15 @@ def _load_live(
     game_date: date | None,
     use_cache: bool,
     allow_fallback: bool = True,
+    season_type: str = "Regular Season",
 ) -> MatchupData:
     """Fetch live priors for `season`, with optional previous-season fill."""
     cutoff = prior_cutoff(game_date)
     date_to = _date_to_param(cutoff)
     fb_season = fallback_season_for(season)
+    st_key = season_type.replace(" ", "")
     cache_key = (
-        f"matchup_{MATCHUP_CACHE_SCHEMA}_{season}_"
+        f"matchup_{MATCHUP_CACHE_SCHEMA}_{season}_{st_key}_"
         f"fb{fb_season if allow_fallback else 'off'}_"
         f"{home['id']}_{away['id']}_"
         f"asof_{cutoff.isoformat() if cutoff else 'latest'}"
@@ -1367,10 +1381,12 @@ def _load_live(
         else:
             return md
 
-    feed_notes: list[str] = []
+    feed_notes: list[str] = [f"season_type={season_type}"]
     _say(
-        f"  fetching live NBA Stats for season {season} "
-        f"(parallel waves; regular + preseason + last-season blend) ..."
+        f"  fetching live NBA Stats for season {season} [{season_type}] "
+        f"(parallel waves; blend last-season"
+        + (" + preseason" if season_type == "Regular Season" else "")
+        + ") ..."
     )
 
     # --- Wave 1: required base stats (hard retry) ---
@@ -1379,13 +1395,19 @@ def _load_live(
             (
                 "player_cur",
                 lambda: _fetch_league_player_stats(
-                    season, date_to, use_cache=use_cache
+                    season,
+                    date_to,
+                    season_type=season_type,
+                    use_cache=use_cache,
                 ),
             ),
             (
                 "team_cur",
                 lambda: _fetch_league_team_stats(
-                    season, date_to, use_cache=use_cache
+                    season,
+                    date_to,
+                    season_type=season_type,
+                    use_cache=use_cache,
                 ),
             ),
         ]
@@ -1393,13 +1415,48 @@ def _load_live(
     player_rows = _unwrap_parallel(w1.get("player_cur"), "player stats", required=True)
     team_rows = _unwrap_parallel(w1.get("team_cur"), "team advanced", required=True)
     if not player_rows:
-        feed_notes.append(f"player stats {season}: empty (will blend last/pre)")
+        feed_notes.append(
+            f"player stats {season} [{season_type}]: empty (will blend fallbacks)"
+        )
     else:
-        feed_notes.append(f"player stats {season}: OK ({len(player_rows)} rows)")
+        feed_notes.append(
+            f"player stats {season} [{season_type}]: OK ({len(player_rows)} rows)"
+        )
     if team_rows:
-        feed_notes.append(f"team advanced {season}: OK ({len(team_rows)} rows)")
+        feed_notes.append(
+            f"team advanced {season} [{season_type}]: OK ({len(team_rows)} rows)"
+        )
     else:
-        feed_notes.append(f"team advanced {season}: empty")
+        feed_notes.append(f"team advanced {season} [{season_type}]: empty")
+
+    # Playoffs early / empty → fill from same-season Regular Season (still pre-tip DateTo)
+    if season_type == "Playoffs" and (not player_rows or not team_rows):
+        _say("  playoffs empty/sparse — pulling same-season Regular Season fill ...")
+        try:
+            if not player_rows:
+                player_rows = _fetch_league_player_stats(
+                    season,
+                    date_to,
+                    season_type="Regular Season",
+                    use_cache=use_cache,
+                )
+                feed_notes.append(
+                    f"player stats: Playoffs empty → Regular Season fill "
+                    f"({len(player_rows or [])} rows)"
+                )
+            if not team_rows:
+                team_rows = _fetch_league_team_stats(
+                    season,
+                    date_to,
+                    season_type="Regular Season",
+                    use_cache=use_cache,
+                )
+                feed_notes.append(
+                    f"team advanced: Playoffs empty → Regular Season fill "
+                    f"({len(team_rows or [])} rows)"
+                )
+        except Exception as exc:  # noqa: BLE001
+            feed_notes.append(f"Regular Season fill after Playoffs: FAILED ({exc})")
 
     fallback_player_rows: list[dict[str, Any]] | None = None
     fallback_team_rows: list[dict[str, Any]] | None = None
@@ -1408,8 +1465,11 @@ def _load_live(
 
     # --- Wave 2: blend inputs + rosters (parallel; soft where safe) ---
     if allow_fallback:
+        want_pre = season_type == "Regular Season"
         _say(
-            f"  wave2: last season {fb_season} + preseason + draft + rosters ..."
+            f"  wave2: last season {fb_season}"
+            + (" + preseason" if want_pre else "")
+            + " + draft + rosters ..."
         )
         w2_jobs: list[tuple[str, Any]] = [
             (
@@ -1424,12 +1484,6 @@ def _load_live(
                     fb_season, None, use_cache=use_cache
                 ),
             ),
-            (
-                "player_pre",
-                lambda: _fetch_league_player_stats(
-                    season, None, season_type="Pre Season", use_cache=use_cache
-                ),
-            ),
             ("draft", lambda: _fetch_draft_picks(season)),
             (
                 "roster_home",
@@ -1440,6 +1494,15 @@ def _load_live(
                 lambda: _fetch_roster(int(away["id"]), season, use_cache=use_cache),
             ),
         ]
+        if want_pre:
+            w2_jobs.append(
+                (
+                    "player_pre",
+                    lambda: _fetch_league_player_stats(
+                        season, None, season_type="Pre Season", use_cache=use_cache
+                    ),
+                )
+            )
         w2 = parallel_map(w2_jobs)
 
         fb_p = w2.get("player_fb")
@@ -1464,15 +1527,19 @@ def _load_live(
                 f"teams={len(fallback_team_rows or [])})"
             )
 
-        pre = w2.get("player_pre")
-        if isinstance(pre, Exception):
-            feed_notes.append(f"preseason {season}: FAILED ({pre}) — continuing")
-            preseason_player_rows = None
+        if want_pre:
+            pre = w2.get("player_pre")
+            if isinstance(pre, Exception):
+                feed_notes.append(f"preseason {season}: FAILED ({pre}) — continuing")
+                preseason_player_rows = None
+            else:
+                preseason_player_rows = pre or None
+                n_pre = len(preseason_player_rows or [])
+                feed_notes.append(f"preseason {season}: OK ({n_pre} rows)")
+                _say(f"  preseason rows: {n_pre}")
         else:
-            preseason_player_rows = pre or None
-            n_pre = len(preseason_player_rows or [])
-            feed_notes.append(f"preseason {season}: OK ({n_pre} rows)")
-            _say(f"  preseason rows: {n_pre}")
+            feed_notes.append(f"preseason: skipped (season_type={season_type})")
+            preseason_player_rows = None
 
         dr = w2.get("draft")
         if isinstance(dr, Exception):
@@ -1602,7 +1669,10 @@ def _load_live(
             lambda: soft_fetch(
                 f"player advanced {season}",
                 lambda: _fetch_league_player_advanced(
-                    season, date_to, use_cache=use_cache
+                    season,
+                    date_to,
+                    season_type=season_type,
+                    use_cache=use_cache,
                 ),
                 retries=2,
                 use_cache=False,
@@ -1612,7 +1682,12 @@ def _load_live(
             "hustle_cur",
             lambda: soft_fetch(
                 f"hustle {season}",
-                lambda: _fetch_team_hustle(season, date_to, use_cache=use_cache),
+                lambda: _fetch_team_hustle(
+                    season,
+                    date_to,
+                    season_type=season_type,
+                    use_cache=use_cache,
+                ),
                 retries=2,
                 use_cache=False,
             ),
@@ -1622,7 +1697,11 @@ def _load_live(
             lambda: soft_fetch(
                 f"PtDefend Overall {season}",
                 lambda: _fetch_pt_team_defend(
-                    season, date_to, defense_category="Overall", use_cache=use_cache
+                    season,
+                    date_to,
+                    defense_category="Overall",
+                    season_type=season_type,
+                    use_cache=use_cache,
                 ),
                 retries=2,
                 use_cache=False,
@@ -1636,6 +1715,7 @@ def _load_live(
                     season,
                     date_to,
                     defense_category="3 Pointers",
+                    season_type=season_type,
                     use_cache=use_cache,
                 ),
                 retries=2,
@@ -1650,6 +1730,7 @@ def _load_live(
                     season,
                     date_to,
                     defense_category="Less Than 6Ft",
+                    season_type=season_type,
                     use_cache=use_cache,
                 ),
                 retries=2,
@@ -1661,7 +1742,10 @@ def _load_live(
             lambda: soft_fetch(
                 f"FourFactors {season}",
                 lambda: _fetch_league_team_four_factors(
-                    season, date_to, use_cache=use_cache
+                    season,
+                    date_to,
+                    season_type=season_type,
+                    use_cache=use_cache,
                 ),
                 retries=2,
                 use_cache=False,
@@ -1672,7 +1756,10 @@ def _load_live(
             lambda: soft_fetch(
                 f"ShotLocations {season}",
                 lambda: _fetch_team_shot_locations(
-                    season, date_to, use_cache=use_cache
+                    season,
+                    date_to,
+                    season_type=season_type,
+                    use_cache=use_cache,
                 ),
                 retries=2,
                 use_cache=False,
@@ -2107,29 +2194,35 @@ def load_matchup(
     force_fixtures: bool = False,
     allow_fallback: bool = True,
     fixture_path: str | Path | None = None,
+    season_type: str = "Regular Season",
 ) -> MatchupData:
     """
-    Pull live roster/stats priors for the matchup.
+    Pull live roster/stats priors for any NBA matchup (all 30 teams).
 
     Default: live NBA Stats for `season` (project default 2026-27), with
     beginning-of-season blend of last season + preseason + rookie expected
-    production (GP-weighted toward current regular S2D). Whole-team
-    last-season fill if still < MIN_USABLE_PLAYERS.
+    production (GP-weighted toward current S2D). Whole-team last-season fill
+    if still < MIN_USABLE_PLAYERS. `season_type` is Regular Season or Playoffs
+    (Playoffs tip dates auto-selected in CLI; empty playoff boards fall back
+    to same-season Regular Season).
     Fixtures: ONLY if force_fixtures=True. Never silent fixture fallback.
     """
     if force_fixtures or fixture_path:
         path = Path(fixture_path) if fixture_path else None
         _say(
             "WARNING: fixture mode uses OUTDATED sample data "
-            "(not live 2026-27). For real sims, omit --fixtures/--fixture-file."
+            "(not live season). For real sims, omit --fixtures/--fixture-file."
         )
         fx = load_fixture(path)
         if path is None and (
-            home["abbreviation"] != "SAC" or away["abbreviation"] != "LAC"
+            home["abbreviation"] != fx.home.abbreviation
+            or away["abbreviation"] != fx.away.abbreviation
         ):
             _say(
-                f"NOTE: default --fixtures loads bundled SAC/LAC sample "
-                f"(requested {away['abbreviation']} @ {home['abbreviation']})."
+                f"NOTE: default --fixtures loads bundled "
+                f"{fx.away.abbreviation}@{fx.home.abbreviation} smoke sample "
+                f"(requested {away['abbreviation']} @ {home['abbreviation']}). "
+                f"Engine itself is team-agnostic — use live mode for real matchups."
             )
         fx.game_date = game_date.isoformat() if game_date else None
         fx.as_of = None
@@ -2143,12 +2236,13 @@ def load_matchup(
             game_date=game_date,
             use_cache=use_cache,
             allow_fallback=allow_fallback,
+            season_type=season_type,
         )
     except Exception as exc:
         raise RuntimeError(
-            f"Live NBA Stats fetch failed for season {season}: {exc}\n"
+            f"Live NBA Stats fetch failed for season {season} [{season_type}]: {exc}\n"
             f"Requirements: outbound HTTPS to stats.nba.com, packages in "
             f"requirements.txt (nba_api, numpy, tabulate).\n"
             f"Retry later, or pass --fixtures ONLY for offline smoke tests "
-            f"(inaccurate / not 2026-27)."
+            f"(inaccurate sample data)."
         ) from exc

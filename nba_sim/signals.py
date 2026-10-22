@@ -281,9 +281,17 @@ def corner3_rate_tilt(corner_rate: float) -> float:
     return _clip(1.0 + 0.03 * z, 0.96, 1.05)
 
 
-def altitude_adjustments(team_abbr: str, *, is_home: bool) -> tuple[float, float]:
-    """Return (fg3_absolute_boost, pace_delta). Only DEN at home."""
-    if is_home and team_abbr.upper() == "DEN":
+def altitude_adjustments(
+    team_abbr: str,
+    *,
+    is_home: bool,
+    team_id: int | None = None,
+) -> tuple[float, float]:
+    """Return (fg3_absolute_boost, pace_delta). Only Denver at home (altitude)."""
+    is_den = team_abbr.upper() == "DEN" or (
+        team_id is not None and int(team_id) == DENVER_TEAM_ID
+    )
+    if is_home and is_den:
         return ALTITUDE_FG3_BOOST, ALTITUDE_PACE_DELTA
     return 0.0, 0.0
 
@@ -327,13 +335,16 @@ def apply_early_season_shrink(team: Any) -> list[str]:
 
 
 def apply_altitude(team: Any, *, is_home: bool) -> list[str]:
-    fg3, pace_d = altitude_adjustments(team.abbreviation, is_home=is_home)
+    tid = getattr(team, "team_id", None)
+    fg3, pace_d = altitude_adjustments(
+        team.abbreviation, is_home=is_home, team_id=tid
+    )
     if pace_d == 0 and fg3 == 0:
         return []
     team.pace = float(team.pace) + pace_d
     team.altitude_fg3_boost = fg3
     return [
-        f"{team.abbreviation} altitude (DEN home): pace{pace_d:+.1f}, "
+        f"{team.abbreviation} altitude (home DEN): pace{pace_d:+.1f}, "
         f"3P+{fg3:.3f}"
     ]
 

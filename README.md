@@ -2,7 +2,9 @@
 
 Monte Carlo NBA game simulator. **You only provide the matchup** (or a slate date). The tool pulls **live 2026-27** rosters and season-to-date stats from NBA Stats (`nba_api` → `stats.nba.com`), with **beginning-of-season blend** (last season + preseason + draft-scaled rookie priors → regular S2D).
 
-**Model note:** opponent DEF_RATING adjusts make% as `opp_DRtg / league` (higher DRtg = worse D = offense boost). An earlier inverted formula understated good-defense teams (e.g. Clippers).
+**Works for any of the 30 NBA teams** (name, nickname, or abbreviation). Model logic is matchup-agnostic; the only venue special case is **DEN home altitude**. Bundled `--fixtures` JSON is offline smoke only (not a favored matchup).
+
+**Model note:** opponent DEF_RATING adjusts make% as `opp_DRtg / league` (higher DRtg = worse D = offense boost).
 
 ## Install
 
@@ -19,20 +21,20 @@ pip install -r requirements.txt
 Do **not** pass `--fixtures` for a real matchup. Fixtures are outdated offline smoke only.
 
 ```bash
-# Just works: pulls rosters, stats, four-factors, shot zones, hustle/PtDefend, injuries…
-python -m nba_sim --home LAC --away SAC --n 5000
+# Any matchup — pulls rosters, stats, four-factors, shot zones, hustle/PtDefend, injuries…
+python -m nba_sim --home BOS --away NYK --n 5000
+python -m nba_sim --home Nuggets --away "Minnesota Timberwolves" --n 5000
+python -m nba_sim --home GSW --away LAL --n 5000
 
-# Full names
-python -m nba_sim --home "Sacramento Kings" --away "LA Clippers" --n 5000
-
-# Optional tip date → season from date; priors through day before tip only
-python -m nba_sim --home SAC --away LAC --date 2026-10-22 --n 5000
+# Tip date → season + season_type (Playoffs ≈ Apr 15–Jun 30); priors through day before tip
+python -m nba_sim --home OKC --away DEN --date 2027-05-12 --n 5000
+python -m nba_sim --home OKC --away DEN --date 2027-05-12 --season-type Playoffs --n 5000
 
 # Explicit season override
-python -m nba_sim --home SAC --away LAC --season 2026-27 --n 5000
+python -m nba_sim --home MIL --away PHI --season 2026-27 --n 5000
 
 # Thin wrapper
-python simulate.py --home SAC --away LAC --n 5000
+python simulate.py --home BOS --away MIA --n 5000
 ```
 
 ### Doctor / data check
@@ -45,7 +47,7 @@ python -m nba_sim --check-data          # same
 python -m nba_sim doctor --json         # machine-readable
 ```
 
-Required feeds (player/team stats, roster, scoreboard) must pass. Optional feeds (hustle, PtDefend, Four Factors, shot locations, ESPN injuries) warn and degrade gracefully with loud `feed:` provenance. After upgrades use `--no-cache` once (schema `blendv7`).
+Required feeds (player/team stats, roster, scoreboard) must pass. Optional feeds (hustle, PtDefend, Four Factors, shot locations, ESPN injuries) warn and degrade gracefully with loud `feed:` provenance. After upgrades use `--no-cache` once (schema `blendv8`).
 
 ### Live fetch env tips (`stats.nba.com`)
 
@@ -59,7 +61,7 @@ Required feeds (player/team stats, roster, scoreboard) must pass. Optional feeds
 
 ```bash
 export NBA_SIM_TIMEOUT=120 NBA_SIM_RETRIES=6
-python -m nba_sim --home LAC --away SAC --n 5000 --no-cache   # force fresh
+python -m nba_sim --home BOS --away NYK --n 5000 --no-cache   # force fresh
 ```
 
 Caches: `.cache/` (matchup aggregates) + `.cache/endpoints/` (per-endpoint JSON). Safe to delete.
@@ -122,6 +124,7 @@ Live odds feeds are not wired; pass lines via flags or `--lines-csv` for slate.
 | `--slate-date` | slate mode | Full slate for `YYYY-MM-DD` (US/Eastern) |
 | `--date` | no | Tip `YYYY-MM-DD` (single game); priors through **D−1** |
 | `--season` | no | Season label (default **`2026-27`**) |
+| `--season-type` | no | `Regular Season` / `Playoffs` / `Pre Season` (default from tip date) |
 | `--n` | no | Simulations per game (default 5000; max 200000) |
 | `--seed` | no | RNG seed |
 | `--json` | no | Machine-readable JSON output |
@@ -161,10 +164,10 @@ Styles are derived (push-pace / grind / live-by-three / paint-first / defense-fi
 
 ```bash
 # Fresh live pull (recommended after upgrades)
-python -m nba_sim --home LAC --away SAC --date 2026-10-22 --n 5000 --seed 42 --no-cache
+python -m nba_sim --home DEN --away MIN --date 2026-10-22 --n 5000 --seed 42 --no-cache
 
 # Skip injuries / rest
-python -m nba_sim --home LAC --away SAC --no-injuries --no-rest --n 5000
+python -m nba_sim --home BOS --away NYK --no-injuries --no-rest --n 5000
 ```
 
 ## Output

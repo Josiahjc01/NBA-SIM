@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.1
+- **All-30 generality:** richer aliases (GS/SA/WSH/CHO/BRK/…); short-query guard
+  so `GS`/`SA` no longer substring-collide; error copy team-agnostic
+- **Playoffs:** tip dates ≈ Apr 15–Jun 30 use `Playoffs` boards (`--season-type` override);
+  empty playoff dashboards fall back to same-season Regular Season; cache key includes type (`blendv8`)
+- Arena coords asserted for every `nba_api` static abbr; DEN altitude also keys on team_id
+- Docs/examples diversified beyond SAC/LAC; fixtures noted as smoke-only samples
+- Test: every team resolves + has coords + builds `_build_context`
+
 ## 0.5.0
 - **Four Factors** live feed (`LeagueDashTeamStats` MeasureType=Four Factors):
   eFG / TOV% / OREB% / FTR (+ opp) → mild FG, TOV blend, OREB battle, foul rate

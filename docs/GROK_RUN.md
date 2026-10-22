@@ -36,22 +36,22 @@ python -m nba_sim doctor
 
 ## Run a matchup (live 2026-27)
 
-One command pulls everything needed (rosters, stats, blend, four-factors, shot zones, hustle/PtDefend, injuries):
+Works for **any of the 30 NBA teams**. One command pulls everything needed:
 
 ```bash
 source .venv/bin/activate
-python -m nba_sim --home LAC --away SAC --n 5000
+python -m nba_sim --home BOS --away NYK --n 5000
 # After upgrades / new cache schema:
-python -m nba_sim --home LAC --away SAC --n 5000 --no-cache --seed 42
+python -m nba_sim --home DEN --away MIN --n 5000 --no-cache --seed 42
 ```
 
 Other examples:
 
 ```bash
-python -m nba_sim --home Kings --away Clippers --n 5000
-python -m nba_sim --home SAC --away LAC --date 2026-10-22 --n 5000
-python -m nba_sim --home SAC --away LAC --spread -3.5 --total 224.5 --n 5000
-python simulate.py --home SAC --away LAC --n 5000 --season 2026-27
+python -m nba_sim --home Celtics --away Knicks --n 5000
+python -m nba_sim --home OKC --away DEN --date 2027-05-12 --n 5000   # Playoffs boards
+python -m nba_sim --home MIL --away PHI --spread -3.5 --total 224.5 --n 5000
+python simulate.py --home GSW --away LAL --n 5000 --season 2026-27
 ```
 
 ## Full-day slate (US/Eastern)
@@ -81,7 +81,7 @@ If live fetch fails, the CLI **errors** (no silent fixture swap). Fix network / 
 
 ```bash
 PYTHONPATH=. python3 -m unittest tests.test_fallback_and_slate -v
-python -m nba_sim --home SAC --away LAC --fixtures --n 50
+python -m nba_sim --home BOS --away NYK --fixtures --n 50   # still loads bundled smoke JSON
 python -m nba_sim --slate-date 2026-10-22 --fixtures --n 20
 ```
 

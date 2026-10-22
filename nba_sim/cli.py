@@ -62,18 +62,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="Verify connectivity to each live data source (same as `doctor`) then exit.",
     )
 
-    p.add_argument("--home", default=None, help="Home team name or abbreviation (e.g. SAC, Kings)")
-    p.add_argument("--away", default=None, help="Away team name or abbreviation (e.g. LAC, Clippers)")
+    p.add_argument(
+        "--home",
+        default=None,
+        help="Home team name or abbreviation (any of 30; e.g. BOS, Nuggets, GSW)",
+    )
+    p.add_argument(
+        "--away",
+        default=None,
+        help="Away team name or abbreviation (any of 30; e.g. NYK, Celtics, LAL)",
+    )
     p.add_argument(
         "--date",
         default=None,
         help="Optional tip date YYYY-MM-DD (single-game mode). Priors through the prior day only. "
-        f"Omit for latest {CURRENT_SEASON} season-to-date.",
+        f"Omit for latest {CURRENT_SEASON} season-to-date. Mid-Apr–Jun tips use Playoffs boards.",
     )
     p.add_argument(
         "--season",
         default=None,
         help=f"NBA season label (default {CURRENT_SEASON}). Example: 2026-27",
+    )
+    p.add_argument(
+        "--season-type",
+        default=None,
+        metavar="TYPE",
+        help=(
+            "Regular Season | Playoffs | Pre Season. Default: derived from --date "
+            "(Playoffs ≈ Apr 15–Jun 30); otherwise Regular Season."
+        ),
     )
     p.add_argument("--n", type=int, default=5000, help="Number of simulations (default 5000; max 200000)")
     p.add_argument(
@@ -218,6 +235,7 @@ def _run_one_matchup(
     args,
     lines: GameLines | None,
     seed: int | None,
+    season_type: str = "Regular Season",
 ) -> tuple:
     force_fx = bool(args.fixtures or args.fixture_file)
     matchup = load_matchup(
@@ -229,6 +247,7 @@ def _run_one_matchup(
         force_fixtures=force_fx,
         allow_fallback=not args.no_fallback,
         fixture_path=args.fixture_file,
+        season_type=season_type,
     )
     if matchup.feed_notes:
         fails = [n for n in matchup.feed_notes if "FAILED" in n or "unavailable" in n]
@@ -270,7 +289,11 @@ def _run_single(args) -> int:
         return 2
 
     try:
-        season, game_date = resolve_season(date_str=args.date, season_override=args.season)
+        season, game_date, season_type = resolve_season(
+            date_str=args.date,
+            season_override=args.season,
+            season_type_override=getattr(args, "season_type", None),
+        )
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -279,9 +302,12 @@ def _run_single(args) -> int:
         from datetime import timedelta
 
         prior_through = (game_date - timedelta(days=1)).isoformat()
-        date_msg = f", tip {game_date.isoformat()}, priors through {prior_through}"
+        date_msg = (
+            f", tip {game_date.isoformat()}, priors through {prior_through}, "
+            f"type={season_type}"
+        )
     else:
-        date_msg = ", latest season-to-date"
+        date_msg = f", latest season-to-date, type={season_type}"
     _log(
         args,
         f"Loading LIVE priors for {away['abbreviation']} @ {home['abbreviation']} "
@@ -299,6 +325,7 @@ def _run_single(args) -> int:
             args=args,
             lines=lines,
             seed=args.seed,
+            season_type=season_type,
         )
     except RuntimeError as e:
         print(f"error: {e}", file=sys.stderr)
@@ -378,12 +405,16 @@ def _run_slate(args) -> int:
 
     # Season for tip date = slate date (priors through day before)
     try:
-        season, game_date = resolve_season(
-            date_str=slate_date.isoformat(), season_override=args.season
+        season, game_date, season_type = resolve_season(
+            date_str=slate_date.isoformat(),
+            season_override=args.season,
+            season_type_override=getattr(args, "season_type", None),
         )
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
+
+    _log(args, f"Season {season} [{season_type}] for slate {slate_date.isoformat()}")
 
     rows: list[dict] = []
     for i, g in enumerate(games):
@@ -402,6 +433,7 @@ def _run_slate(args) -> int:
                 args=args,
                 lines=gl,
                 seed=seed,
+                season_type=season_type,
             )
         except RuntimeError as e:
             rows.append(

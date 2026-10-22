@@ -4,20 +4,23 @@
 
 | Input | Required? | Example |
 |-------|-----------|---------|
-| Home / away teams (name or abbreviation) | Single-game | `--home SAC --away LAC` |
+| Home / away teams (name or abbreviation) | Single-game | `--home BOS --away NYK` (any of 30) |
 | Full-day slate | Alt mode | `--slate` or `--slate-date 2026-10-22` |
 | Game date | Optional (single) | `--date 2026-10-22` |
+| Season type | Optional | `--season-type Playoffs` (else from tip date) |
 | Spread / total | Optional | `--spread -3.5 --total 224.5` |
 
 - **Do not** pass CSVs of box scores or player stats — the system fetches priors.
+- Engine is **team-agnostic** for all 30 franchises (`nba_api` static + aliases + arena coords). Only DEN home altitude is a venue special case.
 - If `--date` / `--season` omitted → **live `2026-27`** season-to-date (`CURRENT_SEASON`).
-- If `--date` or slate date is set → season from that calendar date; **priors only through the day before tip** (pre-tip cutoff). See [realism-audit.md](./realism-audit.md).
+- If `--date` or slate date is set → season from that calendar date; **priors only through the day before tip** (pre-tip cutoff). Tip dates ≈ Apr 15–Jun 30 use **Playoffs** boards (override with `--season-type`). See [realism-audit.md](./realism-audit.md).
 - `--fixtures` is offline smoke only — **never** the default; live failures raise (no silent fixture swap).
 
 ```bash
-python -m nba_sim --home SAC --away LAC --n 5000
+python -m nba_sim --home BOS --away NYK --n 5000
 python -m nba_sim --slate --n 2000
 python -m nba_sim --slate-date 2026-10-22 --n 2000
+python -m nba_sim --home OKC --away DEN --date 2027-05-12 --n 5000
 ```
 
 ### Slate date timezone
@@ -93,12 +96,13 @@ At GP_reg≈0 a veteran is ~last (+ pre if available). A rookie is ~archetype + 
 
 ### Rate limits & caching
 
-- Matchup cache: `.cache/`, schema **`blendv7`**, key includes season, fallback flag, teams, `asof_*` (TTL ~6h).
+- Matchup cache: `.cache/`, schema **`blendv8`**, key includes season, **season_type**, fallback flag, teams, `asof_*` (TTL ~6h).
 - Endpoint cache: `.cache/endpoints/` (sha keys; same TTL). **`--no-cache` bypasses both** (use once after upgrades).
 - Parallel waves (required base → blend/rosters → optional enrichment) with `NBA_SIM_MAX_WORKERS`.
 - Pause + jitter before each live call (`NBA_SIM_PAUSE`, default 0.55s); hard retries via `NBA_SIM_RETRIES`.
-- Optional offline only: `--fixtures` → `nba_sim/fixtures/sac_lac.json` (outdated; bannered). **Not** used on live failure.
+- Optional offline only: `--fixtures` → bundled sample JSON (outdated; bannered). **Not** used on live failure; not a favored matchup.
 - Connectivity: `python -m nba_sim doctor` / `--check-data` (includes Four Factors + Shot Locations).
+- **Playoffs limitation:** Play-In (early April) may still resolve as Regular Season unless `--season-type Playoffs` is set; empty playoff dashboards fall back to same-season Regular Season fill.
 
 ## Simulation model
 
@@ -139,10 +143,11 @@ Possession Monte Carlo (not independent Normal team scores).
 
 Full leak/bias/consistency checklist: [realism-audit.md](./realism-audit.md).
 
-## Follow-ups
+## Follow-ups (accuracy impact order)
 
-1. Official NBA injury/inactive report when a stable public source is available.
-2. Player-level `LeagueDashPtDefend` / true lineup net ratings (sample-honest).
-3. Last-N-games minutes heuristics (optional feed; shrink hard).
-4. Live closing lines feed (optional).
-5. Clutch splits only with aggressive GP shrink.
+1. Official NBA injury/inactive report (multi-source).
+2. True SoS from opponent slate nets (beyond early-GP shrink).
+3. Player-level PtDefend / sample-honest lineup net ratings.
+4. Last-N-games minutes / projected starters (shrink hard).
+5. Live closing lines feed (optional calibration).
+6. Play-In calendar precision; clutch splits only with aggressive GP shrink.
