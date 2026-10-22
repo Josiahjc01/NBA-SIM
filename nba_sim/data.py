@@ -507,7 +507,10 @@ def _build_team_with_fallback(
     n_with_pre = 0
     n_with_last = 0
 
-    for pid in candidate_ids:
+    # Sorted for stable player-list order across processes/fetches (tied minutes
+    # in rotation then preserve this order). Unsorted set iteration can shuffle
+    # provenance and rare rotation ties → tiny win% drift without a seed change.
+    for pid in sorted(candidate_ids):
         meta = roster_meta.get(pid)
         name = (
             (meta.name if meta else None)

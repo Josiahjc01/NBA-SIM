@@ -11,14 +11,15 @@ Design goals (v1 realism):
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import hashlib
+from dataclasses import dataclass, field, replace
 from collections.abc import Sequence
 
 import numpy as np
 
 from nba_sim.data import MatchupData, PlayerSeason, TeamSeason
 from nba_sim.lines import GameLines, LineProbabilities, compute_line_probs
-from nba_sim.statsutil import wilson_interval
+from nba_sim.statsutil import binomial_se, wilson_interval
 
 HOME_FG_BOOST = 0.015  # absolute; justified home-court shooting edge
 MIN_ROTATION = 8
@@ -43,6 +44,33 @@ def defensive_fg_adj(opp_def: float, league_def: float = LEAGUE_DEF_RTG) -> floa
     Higher opp_def → worse defense → adj > 1.
     """
     return _clip(max(float(opp_def), 90.0) / float(league_def), 0.94, 1.06)
+
+
+def matchup_fingerprint(matchup: MatchupData) -> str:
+    """
+    Short hash of team ratings + rotation-relevant player rates.
+    Same fingerprint + same seed + same N ⇒ identical win%. Different
+    fingerprint means priors/injuries/rest changed — not Monte Carlo noise.
+    """
+    parts: list[str] = [
+        matchup.season,
+        matchup.source,
+        matchup.as_of or "",
+        matchup.game_date or "",
+    ]
+    for team in (matchup.home, matchup.away):
+        parts.append(
+            f"{team.abbreviation}:{team.pace:.3f}:{team.off_rating:.3f}:"
+            f"{team.def_rating:.3f}:{getattr(team, 'fatigue_fg_mult', 1.0):.4f}"
+        )
+        for p in sorted(team.players, key=lambda x: x.player_id):
+            parts.append(
+                f"{p.player_id}:{p.min:.3f}:{p.pts:.3f}:{p.fga:.3f}:"
+                f"{p.fg_pct:.4f}:{p.fg3_pct:.4f}:{p.fta:.3f}:{p.ft_pct:.4f}:"
+                f"{p.tov:.3f}:{p.reb:.3f}:{p.ast:.3f}:{p.gp}"
+            )
+    digest = hashlib.sha256("|".join(parts).encode()).hexdigest()
+    return digest[:12]
 
 
 @dataclass
@@ -104,8 +132,11 @@ class SimSummary:
     home_win_hi: float = 1.0
     away_win_lo: float = 0.0
     away_win_hi: float = 1.0
+    home_win_se: float = 0.0  # binomial SE on home win%
+    away_win_se: float = 0.0
     seed: int | None = None
     mean_margin: float = 0.0  # home − away
+    priors_fingerprint: str = ""  # stable hash of rates; detect data drift
 
 
 @dataclass
@@ -325,14 +356,27 @@ def _run_possessions(
     return points
 
 
-def simulate_game(matchup: MatchupData, rng: np.random.Generator) -> GameResult:
-    home = _build_context(matchup.home, opp_def=matchup.away.def_rating)
-    away = _build_context(matchup.away, opp_def=matchup.home.def_rating)
-    _credit_minutes(home)
-    _credit_minutes(away)
+def _reset_lines(ctx: _TeamContext) -> None:
+    """Zero counting stats; keep minutes allocation from context build."""
+    for i, line in enumerate(ctx.lines):
+        line.pts = 0.0
+        line.reb = 0.0
+        line.ast = 0.0
+        line.fga = 0
+        line.tov = 0
+        line.fta = 0
+        line.min = float(ctx.minutes[i])
+
+
+def _simulate_with_contexts(
+    home: _TeamContext,
+    away: _TeamContext,
+    rng: np.random.Generator,
+) -> GameResult:
+    _reset_lines(home)
+    _reset_lines(away)
 
     h_poss, a_poss = _expected_possessions(home, away, rng)
-    # Random first possession
     home_first = bool(rng.integers(0, 2))
 
     if home_first:
@@ -345,11 +389,9 @@ def simulate_game(matchup: MatchupData, rng: np.random.Generator) -> GameResult:
     ot = 0
     while hs == aws and ot < MAX_OT_PERIODS:
         ot += 1
-        # Each OT: both teams get OT_POSSESSIONS
         hs += _run_possessions(home, away, OT_POSSESSIONS, rng, home_offense=True)
         aws += _run_possessions(away, home, OT_POSSESSIONS, rng, home_offense=False)
 
-    # Extremely rare still-tied after max OT: coin flip winner by +1 FT-ish point
     if hs == aws:
         if rng.random() < 0.5:
             hs += 1
@@ -358,17 +400,27 @@ def simulate_game(matchup: MatchupData, rng: np.random.Generator) -> GameResult:
             aws += 1
             away.lines[0].pts += 1
 
+    # Snapshot lines so later sims don't mutate prior GameResult objects
+    home_lines = [replace(l) for l in home.lines]
+    away_lines = [replace(l) for l in away.lines]
+
     return GameResult(
         home_score=int(hs),
         away_score=int(aws),
-        home_lines=home.lines,
-        away_lines=away.lines,
+        home_lines=home_lines,
+        away_lines=away_lines,
         home_won=hs > aws,
         away_won=aws > hs,
         ot_periods=ot,
         home_poss=h_poss + ot * OT_POSSESSIONS,
         away_poss=a_poss + ot * OT_POSSESSIONS,
     )
+
+
+def simulate_game(matchup: MatchupData, rng: np.random.Generator) -> GameResult:
+    home = _build_context(matchup.home, opp_def=matchup.away.def_rating)
+    away = _build_context(matchup.away, opp_def=matchup.home.def_rating)
+    return _simulate_with_contexts(home, away, rng)
 
 
 def _aggregate_players(results: Sequence[GameResult], side: str) -> list[dict]:
@@ -412,13 +464,25 @@ def run_simulations(
     n: int = 5000,
     seed: int | None = None,
     lines: GameLines | None = None,
+    *,
+    home_fg_boost: float | None = None,
 ) -> SimSummary:
     if n < 1:
         raise ValueError("n must be ≥ 1")
     rng = np.random.default_rng(seed)
-    results: list[GameResult] = []
-    for _ in range(n):
-        results.append(simulate_game(matchup, rng))
+    # Build rotation/rate contexts once; reset counting lines each sim (big speedup).
+    global HOME_FG_BOOST
+    prev_boost = HOME_FG_BOOST
+    if home_fg_boost is not None:
+        HOME_FG_BOOST = float(home_fg_boost)
+    try:
+        home_ctx = _build_context(matchup.home, opp_def=matchup.away.def_rating)
+        away_ctx = _build_context(matchup.away, opp_def=matchup.home.def_rating)
+        results: list[GameResult] = []
+        for _ in range(n):
+            results.append(_simulate_with_contexts(home_ctx, away_ctx, rng))
+    finally:
+        HOME_FG_BOOST = prev_boost
 
     home_scores = np.array([g.home_score for g in results], dtype=float)
     away_scores = np.array([g.away_score for g in results], dtype=float)
@@ -446,6 +510,8 @@ def run_simulations(
 
     home_lo, home_hi = wilson_interval(float(home_wins), n)
     away_lo, away_hi = wilson_interval(float(away_wins), n)
+    home_wp = home_wins / n
+    away_wp = away_wins / n
 
     return SimSummary(
         n=n,
@@ -455,8 +521,8 @@ def run_simulations(
         home_std=float(home_scores.std(ddof=1)) if n > 1 else 0.0,
         away_mean=float(away_scores.mean()),
         away_std=float(away_scores.std(ddof=1)) if n > 1 else 0.0,
-        home_win_pct=home_wins / n,
-        away_win_pct=away_wins / n,
+        home_win_pct=home_wp,
+        away_win_pct=away_wp,
         tie_pct=ties / n,
         ot_rate=ot_games / n,
         home_players=_aggregate_players(results, "home"),
@@ -477,8 +543,11 @@ def run_simulations(
         home_win_hi=home_hi,
         away_win_lo=away_lo,
         away_win_hi=away_hi,
+        home_win_se=binomial_se(home_wp, n),
+        away_win_se=binomial_se(away_wp, n),
         seed=seed,
         mean_margin=float(home_scores.mean() - away_scores.mean()),
+        priors_fingerprint=matchup_fingerprint(matchup),
     )
 
 

@@ -63,7 +63,16 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"NBA season label (default {CURRENT_SEASON}). Example: 2026-27",
     )
     p.add_argument("--n", type=int, default=5000, help="Number of simulations (default 5000; max 200000)")
-    p.add_argument("--seed", type=int, default=None, help="RNG seed")
+    p.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help=(
+            "RNG seed (recommended). Same seed + same priors fingerprint + same N "
+            "⇒ bit-stable win%. Without a seed, expect ~binomial SE drift "
+            "(≈0.65pp at N=5000 near 70% — not 8pp)."
+        ),
+    )
     p.add_argument(
         "--json",
         action="store_true",
@@ -263,6 +272,14 @@ def _run_single(args) -> int:
         _log(args, f"Using cached live priors (season {matchup.season})")
     else:
         _log(args, f"Using live NBA Stats (season {matchup.season})")
+
+    if args.seed is None:
+        _log(
+            args,
+            "note: no --seed; win% will jitter by ~binomial SE across runs "
+            f"(≈{100.0 * (0.7 * 0.3 / max(args.n, 1)) ** 0.5:.2f}pp at N={args.n} near 70%). "
+            "An 8pp jump means priors or model changed — compare priors fingerprints.",
+        )
 
     _log(
         args,

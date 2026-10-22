@@ -98,10 +98,25 @@ def format_report(
         f"{summary.home_abbr} [{_pct(summary.home_win_lo)}, {_pct(summary.home_win_hi)}]"
     )
     lines.append(
-        f"OT rate: {_pct(summary.ot_rate)} of sims "
-        f"(regulation ties go to OT; pushes≈{_pct(summary.tie_pct)})"
-        + (f"  |  seed={summary.seed}" if summary.seed is not None else "")
+        f"Win% Monte Carlo SE (binomial) — "
+        f"{summary.away_abbr} ±{100.0 * summary.away_win_se:.2f}pp  |  "
+        f"{summary.home_abbr} ±{100.0 * summary.home_win_se:.2f}pp"
+        f"  (swings ≫3·SE ⇒ priors/model changed, not RNG)"
     )
+    seed_bit = (
+        f"seed={summary.seed}"
+        if summary.seed is not None
+        else "seed=(none — expect ~±1 SE run-to-run; use --seed for bit-stable win%)"
+    )
+    lines.append(
+        f"OT rate: {_pct(summary.ot_rate)} of sims "
+        f"(regulation ties go to OT; pushes≈{_pct(summary.tie_pct)})  |  {seed_bit}"
+    )
+    if summary.priors_fingerprint:
+        lines.append(
+            f"Priors fingerprint: {summary.priors_fingerprint}  "
+            f"(same fp+seed+N ⇒ identical win%; different fp ⇒ data drifted)"
+        )
 
     if summary.line_probs is not None:
         lines.append("")
@@ -183,9 +198,12 @@ def summary_to_dict(summary: SimSummary, matchup: MatchupData) -> dict[str, Any]
         "home_win_pct": summary.home_win_pct,
         "away_win_ci95": [summary.away_win_lo, summary.away_win_hi],
         "home_win_ci95": [summary.home_win_lo, summary.home_win_hi],
+        "away_win_se": summary.away_win_se,
+        "home_win_se": summary.home_win_se,
         "tie_pct": summary.tie_pct,
         "ot_rate": summary.ot_rate,
         "seed": summary.seed,
+        "priors_fingerprint": summary.priors_fingerprint,
         "mean_total": summary.mean_total,
         "mean_margin": summary.mean_margin,
         "percentiles": {

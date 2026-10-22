@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.7
+- Win% stability: binomial Monte Carlo SE in report/JSON; priors fingerprint
+- Same seed + same fingerprint + same N ⇒ bit-stable win% (regression tested)
+- Sort candidate player IDs when building blends (stable rotation ties)
+- Context reuse in `run_simulations` (build rates once; reset lines each sim)
+- Document: ~0.65pp SE at N=5000 near 70%; 8pp swings ⇒ model/priors, not RNG
+- Clippers 67→75 win% attributed to DRtg-direction fix (+~8–14pp for stout D), not score bug
+
 ## 0.3.6
 - Rookie priors scaled by draft overall pick (`DraftHistory`, cached)
 - `--fixture-file` for custom offline fixtures

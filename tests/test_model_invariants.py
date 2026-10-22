@@ -7,9 +7,10 @@ import unittest
 
 from nba_sim.cli import main
 from nba_sim.data import load_fixture
-from nba_sim.model import defensive_fg_adj, run_simulations
+from nba_sim.model import defensive_fg_adj, matchup_fingerprint, run_simulations
 from nba_sim.output import summary_to_dict
 from nba_sim.priors import compute_blend_weights
+from nba_sim.statsutil import binomial_se
 
 
 class ModelInvariantTests(unittest.TestCase):
@@ -76,6 +77,50 @@ class ModelInvariantTests(unittest.TestCase):
         s = run_simulations(md, n=20, seed=3)
         payload = summary_to_dict(s, md)
         json.dumps(payload)  # must not raise
+        self.assertIn("home_win_se", payload)
+        self.assertIn("priors_fingerprint", payload)
+        self.assertEqual(payload["priors_fingerprint"], s.priors_fingerprint)
+
+    def test_seeded_runs_bit_stable(self):
+        """Same matchup + seed + N ⇒ identical win% (no hidden nondeterminism)."""
+        md = load_fixture()
+        a = run_simulations(md, n=400, seed=42)
+        b = run_simulations(md, n=400, seed=42)
+        self.assertEqual(a.home_win_pct, b.home_win_pct)
+        self.assertEqual(a.away_win_pct, b.away_win_pct)
+        self.assertEqual(a.home_mean, b.home_mean)
+        self.assertEqual(a.priors_fingerprint, b.priors_fingerprint)
+        self.assertEqual(a.priors_fingerprint, matchup_fingerprint(md))
+
+    def test_binomial_se_matches_formula(self):
+        md = load_fixture()
+        s = run_simulations(md, n=5000, seed=1)
+        self.assertAlmostEqual(s.home_win_se, binomial_se(s.home_win_pct, 5000), places=12)
+        # Document: 8pp is absurd vs SE at N=5000
+        self.assertLess(s.home_win_se, 0.01)  # <1pp
+        self.assertGreater(0.08 / s.home_win_se, 8.0)
+
+    def test_priors_fingerprint_changes_with_drtg(self):
+        md = load_fixture()
+        fp1 = matchup_fingerprint(md)
+        md.away.def_rating = md.away.def_rating + 5.0
+        fp2 = matchup_fingerprint(md)
+        self.assertNotEqual(fp1, fp2)
+
+    def test_context_reuse_matches_per_game_build(self):
+        """run_simulations context reuse must match simulate_game rebuild path."""
+        from nba_sim.model import simulate_game
+        import numpy as np
+
+        md = load_fixture()
+        # Rebuild-each-game path
+        rng = np.random.default_rng(99)
+        rebuild_wins = sum(
+            1 for _ in range(150) if simulate_game(md, rng).home_won
+        )
+        reused = run_simulations(md, n=150, seed=99)
+        # Same seed stream consumption order → identical win count
+        self.assertEqual(reused.home_win_pct, rebuild_wins / 150)
 
 
 class RookieClassificationTests(unittest.TestCase):
