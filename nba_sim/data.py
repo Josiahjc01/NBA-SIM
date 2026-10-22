@@ -123,7 +123,9 @@ def _read_cache(key: str, use_cache: bool) -> Any | None:
 
 def _write_cache(key: str, payload: Any) -> None:
     path = _cache_path(key)
-    path.write_text(json.dumps(payload))
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload))
+    tmp.replace(path)
 
 
 def _f(row: dict[str, Any], *keys: str, default: float = 0.0) -> float:

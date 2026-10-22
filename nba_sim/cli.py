@@ -6,6 +6,7 @@ import argparse
 import json
 import sys
 
+from nba_sim import __version__
 from nba_sim.data import load_matchup
 from nba_sim.injuries import apply_injuries
 from nba_sim.lines import GameLines, load_lines_csv, lines_from_args
@@ -20,6 +21,7 @@ from nba_sim.schedule import (
 )
 from nba_sim.season import CURRENT_SEASON, resolve_season
 from nba_sim.teams import resolve_team
+from nba_sim.validate import validate_matchup
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -32,6 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Single game: --home/--away. Full day: --slate / --slate-date."
         ),
     )
+    p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
 
     mode = p.add_mutually_exclusive_group()
     mode.add_argument(
@@ -169,6 +172,12 @@ def _run_one_matchup(
     )
     _apply_injury_flags(matchup, args)
     _apply_rest_flags(matchup, game_date, args)
+    issues = validate_matchup(matchup)
+    hard = [i for i in issues if "only" in i or "identical" in i]
+    for i in issues:
+        print(f"  validate: {i}")
+    if hard:
+        raise RuntimeError("matchup failed validation: " + "; ".join(hard))
     summary = run_simulations(matchup, n=args.n, seed=seed, lines=lines)
     return matchup, summary
 
