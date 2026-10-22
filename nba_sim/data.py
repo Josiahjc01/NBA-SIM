@@ -483,61 +483,53 @@ def _build_team_with_fallback(
         pre_row = by_id_pre_team.get(pid) or by_id_pre_league.get(pid)
 
         has_last = _row_usable(last_row)
-        # Infer rookie if roster says so OR no last-season NBA history and young name on roster
-        if meta is None and not has_last and reg_row is None:
-            # Unknown history — only apply rookie prior if we have position from nowhere;
-            # skip pure phantoms without any row
-            if pre_row is None:
-                continue
+        has_reg = _row_usable(reg_row)
+        has_pre = _row_usable(pre_row) or (
+            pre_row is not None and _f(pre_row, "MIN") >= 1.0
+        )
 
-        if not has_last and meta and meta.is_rookie:
-            is_rookie = True
-        elif not has_last and meta is None and last_row is None:
-            # No last season row at all → treat as rookie-like for prior purposes
-            # when on current roster
-            if roster_ids is not None and pid in roster_ids:
-                is_rookie = True
+        # Skip phantoms with no usable source at all
+        if meta is None and not has_last and not has_reg and not has_pre:
+            continue
 
-        gp_reg = _f(reg_row, "GP") if reg_row else 0.0
+        # Rookie prior ONLY when roster marks EXP=R (or equivalent) — never
+        # auto-promote two-ways / returning players / undrafted vets.
+        is_rookie = bool(meta.is_rookie) if meta else False
+
+        gp_reg = _f(reg_row, "GP") if has_reg else 0.0
         gp_pre = _f(pre_row, "GP") if pre_row else 0.0
 
         rook_row = None
-        if is_rookie or (not has_last and (roster_ids is None or pid in (roster_ids or set()))):
-            if not has_last:
-                is_rookie = is_rookie or (meta.is_rookie if meta else True)
+        if is_rookie and not has_last:
+            rook_row = rookie_prior_row(position, player_id=pid, name=name)
+        elif not has_last and not has_reg and not has_pre:
+            # On roster but no NBA history and not marked rookie — still need a prior
+            if roster_ids is not None and pid in roster_ids:
                 rook_row = rookie_prior_row(position, player_id=pid, name=name)
+                is_rookie = True  # treat as prospect for provenance
 
         if allow_blend:
             weights = compute_blend_weights(
                 gp_reg=gp_reg,
-                gp_pre=gp_pre,
+                gp_pre=gp_pre if has_pre or gp_pre > 0 else 0.0,
                 has_last=has_last,
                 is_rookie=is_rookie and not has_last,
+                has_reg=has_reg,
             )
-            # Need at least one component
-            if (
-                weights.reg <= 0
-                and weights.last <= 0
-                and weights.pre <= 0
-                and weights.rookie <= 0
-            ):
+            # Drop weight components whose rows are missing
+            adj_reg = weights.reg if (has_reg and reg_row is not None) else 0.0
+            adj_last = weights.last if (has_last and last_row is not None) else 0.0
+            adj_pre = weights.pre if (pre_row is not None and weights.pre > 0) else 0.0
+            adj_rook = weights.rookie if (rook_row is not None and weights.rookie > 0) else 0.0
+            s = adj_reg + adj_last + adj_pre + adj_rook
+            if s <= 1e-9:
                 continue
-            if weights.reg > 0 and reg_row is None:
-                weights = BlendWeights(
-                    reg=0.0,
-                    last=weights.last,
-                    pre=weights.pre,
-                    rookie=weights.rookie,
-                )
-                s = weights.last + weights.pre + weights.rookie
-                if s <= 0:
-                    continue
-                weights = BlendWeights(
-                    reg=0.0,
-                    last=weights.last / s,
-                    pre=weights.pre / s,
-                    rookie=weights.rookie / s,
-                )
+            weights = BlendWeights(
+                reg=adj_reg / s,
+                last=adj_last / s,
+                pre=adj_pre / s,
+                rookie=adj_rook / s,
+            )
             rates = blend_rate_rows(
                 reg=reg_row if weights.reg > 0 else None,
                 last=last_row if weights.last > 0 else None,

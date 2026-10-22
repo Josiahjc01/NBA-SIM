@@ -155,6 +155,11 @@ def _build_context(team: TeamSeason, opp_def: float, league_def: float = 112.0) 
     # Opponent defensive adjustment: shrink FG toward mean by opp DRtg vs league.
     # Applied once here — not again on team pace.
     def_adj = _clip(league_def / max(opp_def, 90.0), 0.94, 1.06)
+    # Team offensive rating vs league: mild finishing boost/penalty (was fetched unused).
+    # Keep narrower than defense adj to avoid double-counting talent already in player FG%.
+    team_ortg = float(team.off_rating) if team.off_rating > 0 else league_def
+    off_adj = _clip(team_ortg / league_def, 0.97, 1.03)
+    shot_adj = def_adj * off_adj
 
     fg2, fg3, three_rate, ft = [], [], [], []
     tov_num = tov_den = 0.0
@@ -168,8 +173,8 @@ def _build_context(team: TeamSeason, opp_def: float, league_def: float = 112.0) 
         g3 = _clip(p.fg3_pct if p.fg3_pct > 0 else 0.35, FG3_FLOOR, FG3_CEIL)
         # Solve rough: FG ≈ (1-tr)*fg2 + tr*g3  → fg2
         fg2_p = (g - tr * g3) / max(1.0 - tr, 0.15)
-        fg2_p = _clip(fg2_p * def_adj, FG_FLOOR, FG_CEIL)
-        g3 = _clip(g3 * def_adj, FG3_FLOOR, FG3_CEIL)
+        fg2_p = _clip(fg2_p * shot_adj, FG_FLOOR, FG_CEIL)
+        g3 = _clip(g3 * shot_adj, FG3_FLOOR, FG3_CEIL)
         fg2.append(fg2_p)
         fg3.append(g3)
         three_rate.append(tr)
@@ -463,6 +468,7 @@ def _audit_batch(results: Sequence[GameResult], matchup: MatchupData) -> dict:
         "mean_poss_proxy_minus_allotment": float(np.mean(poss_proxy_err)) if poss_proxy_err else 0.0,
         "home_court_mechanism": f"+{HOME_FG_BOOST:.3f} absolute FG for home only",
         "pace_mechanism": "single game pace = avg(team paces); player rates are shares",
+        "ortg_mechanism": "team ORtg vs league scales FG/3P once in [0.97,1.03] with DRtg adj",
         "tie_break": f"up to {MAX_OT_PERIODS} OT periods ({OT_POSSESSIONS} poss/side); then +1 coin-flip",
         "data_note": f"priors from matchup source={matchup.source} season={matchup.season}",
     }

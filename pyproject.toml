@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nba-sim"
+version = "0.3.1"
+description = "Monte Carlo NBA game simulator with live stats priors"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "nba_api>=1.4.1",
+  "numpy>=1.26.0",
+  "tabulate>=0.9.0",
+]
+
+[project.scripts]
+nba-sim = "nba_sim.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["nba_sim*"]
+
+[tool.setuptools.package-data]
+nba_sim = ["fixtures/*.json", "fixtures/*.csv"]

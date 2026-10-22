@@ -90,8 +90,10 @@ Live odds feeds are not wired; pass lines via flags or `--lines-csv` for slate.
 | `--slate-date` | slate mode | Full slate for `YYYY-MM-DD` (US/Eastern) |
 | `--date` | no | Tip `YYYY-MM-DD` (single game); priors through **D−1** |
 | `--season` | no | Season label (default **`2026-27`**) |
-| `--n` | no | Simulations per game (default 5000) |
+| `--n` | no | Simulations per game (default 5000; max 200000) |
 | `--seed` | no | RNG seed |
+| `--json` | no | Machine-readable JSON output |
+| `--quiet-priors` | no | Compact provenance (team notes only) |
 | `--no-cache` | no | Bypass on-disk API cache |
 | `--no-fallback` | no | Current-season priors only |
 | `--injuries` | no | Live ESPN injury feed |

@@ -217,31 +217,39 @@ def compute_blend_weights(
     gp_pre: float,
     has_last: bool,
     is_rookie: bool,
+    has_reg: bool | None = None,
 ) -> BlendWeights:
     """
     Beginning-of-season oriented pseudo-count weights.
 
     Veterans: last season dominates until regular-season GP accumulates.
-    Rookies: archetype prior + preseason; no last-season NBA weight.
+    Rookies (roster EXP=R only): archetype prior + preseason; no last-season NBA weight.
+
+    `has_reg`: if False, ignore gp_reg even if >0 (missing/unusable current row).
     """
-    w_reg = max(0.0, float(gp_reg))
-    w_last = K_LAST if (has_last and not is_rookie) else 0.0
+    use_reg = (has_reg if has_reg is not None else gp_reg > 0) and gp_reg > 0
+    w_reg = max(0.0, float(gp_reg)) if use_reg else 0.0
+
+    # True rookies never get last-season NBA weight.
+    use_rookie_prior = bool(is_rookie) and not has_last
+    w_last = K_LAST if (has_last and not use_rookie_prior) else 0.0
+
     if gp_pre > 0:
         w_pre = K_PRE * (min(float(gp_pre), PRE_GP_CAP) / PRE_GP_CAP)
     else:
         w_pre = 0.0
-    # Rookie prior when no last-season NBA history (true rookies / undrafted newbies)
-    w_rookie = K_ROOKIE if (is_rookie or (not has_last and w_reg <= 0 and w_pre <= 0)) else 0.0
-    if is_rookie and not has_last:
-        w_rookie = K_ROOKIE
-        w_last = 0.0
+
+    w_rookie = K_ROOKIE if use_rookie_prior else 0.0
 
     total = w_reg + w_last + w_pre + w_rookie
     if total <= 1e-9:
-        # Absolute empty → equal fallback to last or rookie
-        if is_rookie or not has_last:
+        # Absolute empty: rookies → archetype; else last if claimed; else archetype as last resort
+        if use_rookie_prior or is_rookie:
             return BlendWeights(reg=0.0, last=0.0, pre=0.0, rookie=1.0)
-        return BlendWeights(reg=0.0, last=1.0, pre=0.0, rookie=0.0)
+        if has_last:
+            return BlendWeights(reg=0.0, last=1.0, pre=0.0, rookie=0.0)
+        # Non-rookie with no data (e.g. returning injury) — mild archetype, flagged by caller
+        return BlendWeights(reg=0.0, last=0.0, pre=0.0, rookie=1.0)
 
     return BlendWeights(
         reg=w_reg / total,

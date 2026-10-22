@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Unit + fixture smoke tests
+        run: PYTHONPATH=. python -m unittest discover -s tests -v
+      - name: CLI smoke (fixtures)
+        run: |
+          PYTHONPATH=. python -m nba_sim --home SAC --away LAC --fixtures --n 25 --seed 1 --quiet-priors
+          PYTHONPATH=. python -m nba_sim --slate-date 2026-10-22 --fixtures --n 10 --seed 1 --json

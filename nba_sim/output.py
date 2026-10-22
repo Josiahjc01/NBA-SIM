@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from typing import Any
+
 from nba_sim.data import MatchupData
 from nba_sim.lines import format_line_block
 from nba_sim.model import SimSummary
@@ -11,7 +14,12 @@ def _pct(x: float) -> str:
     return f"{100.0 * x:.1f}%"
 
 
-def format_report(summary: SimSummary, matchup: MatchupData) -> str:
+def format_report(
+    summary: SimSummary,
+    matchup: MatchupData,
+    *,
+    quiet_priors: bool = False,
+) -> str:
     lines: list[str] = []
     lines.append("=" * 64)
     lines.append(
@@ -28,8 +36,17 @@ def format_report(summary: SimSummary, matchup: MatchupData) -> str:
         lines.append("")
         lines.append("Prior season provenance")
         lines.append("-" * 64)
-        for pl in matchup.provenance.summary_lines():
-            lines.append(pl)
+        if quiet_priors:
+            for abbr, note in sorted(matchup.provenance.team_notes.items()):
+                lines.append(f"  {abbr}: {note}")
+            n_rook = sum(1 for p in matchup.provenance.players if p.get("is_rookie"))
+            lines.append(
+                f"  ({len(matchup.provenance.players)} player priors; "
+                f"{n_rook} rookies — omit --quiet-priors for full list)"
+            )
+        else:
+            for pl in matchup.provenance.summary_lines():
+                lines.append(pl)
 
     if matchup.injury_notes:
         lines.append("")
@@ -114,6 +131,51 @@ def format_report(summary: SimSummary, matchup: MatchupData) -> str:
         )
     lines.append("=" * 64)
     return "\n".join(lines)
+
+
+def summary_to_dict(summary: SimSummary, matchup: MatchupData) -> dict[str, Any]:
+    """Machine-readable single-game result."""
+    lp = summary.line_probs
+    return {
+        "n": summary.n,
+        "season": matchup.season,
+        "source": matchup.source,
+        "game_date": matchup.game_date,
+        "as_of": matchup.as_of,
+        "away": summary.away_abbr,
+        "home": summary.home_abbr,
+        "away_mean": summary.away_mean,
+        "home_mean": summary.home_mean,
+        "away_std": summary.away_std,
+        "home_std": summary.home_std,
+        "away_win_pct": summary.away_win_pct,
+        "home_win_pct": summary.home_win_pct,
+        "tie_pct": summary.tie_pct,
+        "ot_rate": summary.ot_rate,
+        "mean_total": summary.mean_total,
+        "away_players": summary.away_players,
+        "home_players": summary.home_players,
+        "audit": summary.audit,
+        "injuries_applied": matchup.injuries_applied,
+        "injury_notes": matchup.injury_notes,
+        "lines": None
+        if lp is None
+        else {
+            "spread": lp.spread,
+            "total": lp.total,
+            "home_cover_pct": lp.home_cover_pct,
+            "away_cover_pct": lp.away_cover_pct,
+            "over_pct": lp.over_pct,
+            "under_pct": lp.under_pct,
+        },
+        "team_notes": dict(matchup.provenance.team_notes)
+        if matchup.provenance
+        else {},
+    }
+
+
+def format_json_report(summary: SimSummary, matchup: MatchupData) -> str:
+    return json.dumps(summary_to_dict(summary, matchup), indent=2)
 
 
 def format_slate_table(

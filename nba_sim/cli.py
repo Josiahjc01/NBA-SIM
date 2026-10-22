@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 
 from nba_sim.data import load_matchup
 from nba_sim.injuries import apply_injuries
 from nba_sim.lines import GameLines, load_lines_csv, lines_from_args
 from nba_sim.model import run_simulations
-from nba_sim.output import format_report, format_slate_table
+from nba_sim.output import format_json_report, format_report, format_slate_table
 from nba_sim.schedule import (
     fetch_slate,
     fixture_slate,
@@ -26,8 +27,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="nba_sim",
         description=(
             f"Monte Carlo NBA game simulator. Default: LIVE {CURRENT_SEASON} "
-            "season-to-date rosters/stats from stats.nba.com, with last-season "
-            "fill when current priors are thin. "
+            "priors from stats.nba.com with beginning-of-season blend "
+            "(last season + preseason + rookie expected production → regular S2D). "
             "Single game: --home/--away. Full day: --slate / --slate-date."
         ),
     )
@@ -58,8 +59,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=f"NBA season label (default {CURRENT_SEASON}). Example: 2026-27",
     )
-    p.add_argument("--n", type=int, default=5000, help="Number of simulations (default 5000)")
+    p.add_argument("--n", type=int, default=5000, help="Number of simulations (default 5000; max 200000)")
     p.add_argument("--seed", type=int, default=None, help="RNG seed")
+    p.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit machine-readable JSON summary (single-game) or slate rows (slate mode).",
+    )
+    p.add_argument(
+        "--quiet-priors",
+        action="store_true",
+        help="Omit per-player prior provenance block from text report (team notes kept).",
+    )
     p.add_argument("--no-cache", action="store_true", help="Bypass on-disk API cache")
     p.add_argument(
         "--no-fallback",
@@ -204,7 +215,14 @@ def _run_single(args) -> int:
         f"({matchup.home.abbreviation} pace={matchup.home.pace:.1f}, "
         f"{matchup.away.abbreviation} pace={matchup.away.pace:.1f}) ..."
     )
-    print(format_report(summary, matchup))
+    if args.json:
+        print(format_json_report(summary, matchup))
+    else:
+        print(
+            format_report(
+                summary, matchup, quiet_priors=bool(args.quiet_priors)
+            )
+        )
     return 0
 
 
@@ -312,12 +330,37 @@ def _run_slate(args) -> int:
             }
         )
 
-    print(format_slate_table(rows, slate_date=slate_date.isoformat(), n=args.n))
+    if args.json:
+        print(
+            json.dumps(
+                {"slate_date": slate_date.isoformat(), "n": args.n, "games": rows},
+                indent=2,
+            )
+        )
+    else:
+        print(format_slate_table(rows, slate_date=slate_date.isoformat(), n=args.n))
+    # Non-zero if any game failed
+    if any(str(r.get("note", "")).startswith("FAILED") for r in rows):
+        return 1
     return 0
+
+
+def _validate_args(args) -> int | None:
+    """Return exit code on invalid args, else None."""
+    if args.n < 1:
+        print("error: --n must be ≥ 1", file=sys.stderr)
+        return 2
+    if args.n > 200_000:
+        print("error: --n too large (max 200000)", file=sys.stderr)
+        return 2
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    bad = _validate_args(args)
+    if bad is not None:
+        return bad
     slate_mode = bool(args.slate or args.slate_date is not None)
     if slate_mode:
         return _run_slate(args)
