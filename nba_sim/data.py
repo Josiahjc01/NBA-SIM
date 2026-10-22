@@ -94,6 +94,7 @@ class PlayerSeason:
     usg_pct: float = 0.0  # 0–100 NBA scale
     ts_pct: float = 0.0  # 0–1
     efg_pct: float = 0.0  # 0–1
+    position: str = ""  # raw roster POSITION; normalized at use time
 
 
 @dataclass
@@ -113,6 +114,9 @@ class TeamSeason:
     three_par: float = 0.0  # team FG3A/FGA
     frontcourt_height_in: float = 0.0
     coach_style_label: str = ""
+    # Hustle (per game); 0 = unknown
+    deflections_pg: float = 0.0
+    contested_shots_pg: float = 0.0
 
 
 @dataclass
@@ -306,6 +310,60 @@ def _fetch_coach_name(team_id: int, season: str) -> str:
     except Exception as exc:  # noqa: BLE001
         _say(f"  coach fetch warning ({team_id}): {exc}")
         return ""
+
+
+def _fetch_team_hustle(
+    season: str,
+    date_to: str | None,
+    *,
+    season_type: str = "Regular Season",
+) -> list[dict[str, Any]]:
+    """LeagueHustleStatsTeam — deflections / contested shots (pre-tip DateTo)."""
+    from nba_api.stats.endpoints import leaguehustlestatsteam
+
+    def call():
+        kwargs: dict[str, Any] = endpoint_kwargs(
+            {
+                "season": season,
+                "per_mode_time": "PerGame",
+                "season_type_all_star": season_type,
+            }
+        )
+        if date_to and season_type == "Regular Season":
+            kwargs["date_to_nullable"] = date_to
+        ep = leaguehustlestatsteam.LeagueHustleStatsTeam(**kwargs)
+        data = ep.get_normalized_dict()
+        for key in ("LeagueHustleStatsTeam", "HustleStatsTeam", "TeamStats"):
+            if data.get(key):
+                return data[key]
+        # First non-empty table
+        for v in data.values():
+            if isinstance(v, list) and v:
+                return v
+        return []
+
+    return with_retries(f"LeagueHustleStatsTeam({season})", call)
+
+
+def _attach_team_hustle(
+    team: TeamSeason, hustle_rows: list[dict[str, Any]] | None
+) -> None:
+    if not hustle_rows:
+        return
+    from nba_sim.defense import parse_hustle_row
+
+    tid = int(team.team_id)
+    for row in hustle_rows:
+        try:
+            row_tid = int(row.get("TEAM_ID") or 0)
+        except (TypeError, ValueError):
+            continue
+        if row_tid != tid:
+            continue
+        prof = parse_hustle_row(row)
+        team.deflections_pg = float(prof.deflections_pg)
+        team.contested_shots_pg = float(prof.contested_pg)
+        return
 
 
 def _fetch_draft_picks(season: str) -> dict[int, int]:
@@ -714,6 +772,7 @@ def _build_team_with_fallback(
             if meta is not None:
                 p.height_in = float(meta.height_in or 0.0)
                 p.weight_lb = float(meta.weight_lb or 0.0)
+                p.position = str(meta.position or "")
             players.append(p)
             provenance.record_player(
                 team_abbr=abbr,
@@ -756,6 +815,7 @@ def _build_team_with_fallback(
         if meta is not None:
             p.height_in = float(meta.height_in or 0.0)
             p.weight_lb = float(meta.weight_lb or 0.0)
+            p.position = str(meta.position or "")
         players.append(p)
         provenance.record_player(
             team_abbr=abbr,
@@ -889,7 +949,7 @@ def _load_live(
     date_to = _date_to_param(cutoff)
     fb_season = fallback_season_for(season)
     cache_key = (
-        f"matchup_blendv4_{season}_fb{fb_season if allow_fallback else 'off'}_"
+        f"matchup_blendv5_{season}_fb{fb_season if allow_fallback else 'off'}_"
         f"{home['id']}_{away['id']}_"
         f"asof_{cutoff.isoformat() if cutoff else 'latest'}"
     )
@@ -1049,6 +1109,24 @@ def _load_live(
     _attach_player_advanced(home_t, adv_rows)
     _attach_player_advanced(away_t, adv_rows)
 
+    # Hustle (deflections / contested) — prefer current, else last season
+    hustle_rows: list[dict[str, Any]] | None = None
+    try:
+        _say(f"  fetching team hustle ({season}) ...")
+        hustle_rows = _fetch_team_hustle(season, date_to)
+    except Exception as exc:  # noqa: BLE001
+        _say(f"  hustle current warning: {exc}")
+        hustle_rows = None
+    if not hustle_rows and allow_fallback:
+        try:
+            _say(f"  fetching team hustle ({fb_season}) ...")
+            hustle_rows = _fetch_team_hustle(fb_season, None)
+        except Exception as exc:  # noqa: BLE001
+            _say(f"  hustle last-season warning: {exc}")
+            hustle_rows = None
+    _attach_team_hustle(home_t, hustle_rows)
+    _attach_team_hustle(away_t, hustle_rows)
+
     # Head coaches (best-effort)
     home_coach = _fetch_coach_name(int(home["id"]), season) or _fetch_coach_name(
         int(home["id"]), fb_season
@@ -1126,6 +1204,7 @@ def _team_from_dict(d: dict[str, Any]) -> TeamSeason:
         kwargs.setdefault("usg_pct", 0.0)
         kwargs.setdefault("ts_pct", 0.0)
         kwargs.setdefault("efg_pct", 0.0)
+        kwargs.setdefault("position", "")
         allowed = set(PlayerSeason.__dataclass_fields__)
         kwargs = {k: v for k, v in kwargs.items() if k in allowed}
         players.append(PlayerSeason(**kwargs))
@@ -1143,6 +1222,8 @@ def _team_from_dict(d: dict[str, Any]) -> TeamSeason:
         three_par=float(d.get("three_par") or 0.0),
         frontcourt_height_in=float(d.get("frontcourt_height_in") or 0.0),
         coach_style_label=str(d.get("coach_style_label") or ""),
+        deflections_pg=float(d.get("deflections_pg") or 0.0),
+        contested_shots_pg=float(d.get("contested_shots_pg") or 0.0),
     )
     return _finalize_team_context(team, coach_name=team.coach_name)
 

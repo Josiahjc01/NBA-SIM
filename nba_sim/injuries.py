@@ -8,7 +8,9 @@ Limitations:
 - Status strings vary; we map Out/Doubtful → 0 minutes, Questionable → 50%,
   Probable → 100% (no change).
 - Name matching is fuzzy (normalized lowercase); misses are skipped with a note.
-- Does not use same-game box scores. Optional; off by default unless --injuries.
+- Does not use same-game box scores.
+- CLI default: ON for live runs, OFF for --fixtures (override with
+  --injuries / --no-injuries; --injuries-csv always applies).
 """
 
 from __future__ import annotations

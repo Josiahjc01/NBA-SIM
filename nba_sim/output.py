@@ -190,6 +190,14 @@ def format_report(
             f"mean team MIN={a.get('mean_team_minutes', 0):.1f}  "
             f"negatives={a.get('negative_stat_events', 0)}"
         )
+        cal = a.get("calibration") or {}
+        if cal.get("issues"):
+            lines.append(
+                f"Calibration: ok={cal.get('ok')} warn={cal.get('n_warn')} "
+                f"error={cal.get('n_error')}"
+            )
+            for iss in cal["issues"][:4]:
+                lines.append(f"  [{iss.get('severity')}] {iss.get('message')}")
     lines.append("=" * 64)
     return "\n".join(lines)
 
@@ -237,12 +245,16 @@ def summary_to_dict(summary: SimSummary, matchup: MatchupData) -> dict[str, Any]
             "coach_style": matchup.home.coach_style_label,
             "three_par": matchup.home.three_par,
             "frontcourt_height_in": matchup.home.frontcourt_height_in,
+            "deflections_pg": matchup.home.deflections_pg,
+            "contested_shots_pg": matchup.home.contested_shots_pg,
         },
         "away_context": {
             "coach": matchup.away.coach_name,
             "coach_style": matchup.away.coach_style_label,
             "three_par": matchup.away.three_par,
             "frontcourt_height_in": matchup.away.frontcourt_height_in,
+            "deflections_pg": matchup.away.deflections_pg,
+            "contested_shots_pg": matchup.away.contested_shots_pg,
         },
         "lines": None
         if lp is None

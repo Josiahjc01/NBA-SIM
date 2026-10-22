@@ -47,8 +47,11 @@ For N simulations (per game):
 | Rosters | `CommonTeamRoster` |
 | Player per-game priors | `LeagueDashPlayerStats` (`PerGame`) |
 | Team pace / ORtg / DRtg | `LeagueDashTeamStats` (`Advanced`) |
+| Player advanced | `LeagueDashPlayerStats` (`Advanced`) — USG/TS/eFG |
+| Hustle | `LeagueHustleStatsTeam` — deflections / contested |
+| Heights / position | `CommonTeamRoster` |
 | Daily slate | `ScoreboardV2` (schedule only) |
-| Injuries (optional) | ESPN site API (unofficial) or `--injuries-csv` |
+| Injuries (live default on) | ESPN site API (unofficial) or `--injuries-csv` |
 
 ### Pre-tip cutoff (anti-leak)
 
@@ -97,14 +100,16 @@ Possession Monte Carlo (not independent Normal team scores).
 1. **Possessions (single pace source):**  
    `poss ≈ clip(avg(home.pace, away.pace) + N(0,2.5), 88, 115)` for each team.  
    Player season PTS averages are **not** a second pace multiplier — they set **usage / rate shares**.
-2. **Rotation:** top 8–10 by season minutes (after injury mult); team minutes scaled to **240** preserving relative shares.
-3. **Usage:** `∝ FGA × √MIN` (normalized). Not equal-usage.
+2. **Rotation:** top 8–10 by evidence minutes (cap archetype rookies); team minutes → **240**.
+3. **Usage:** blend `FGA×√MIN` with USG% when available; mild concentration; archetype down-weight.
 4. **Possession outcomes:** TOV → else shot (2/3 by player 3PA rate) → make/miss; assists on ~65% of makes; OREB can extend possession; DREB to defense.
 5. **Home court:** `+1.5%` absolute FG only (no home pace bump).
-6. **Opponent adj:** FG/3P × `(opp_DRtg / league)` once, clipped to `[0.94, 1.06]` (higher DRtg = worse D = boost).  
-7. **Team ORtg:** kept on the team object for reporting / B2B nudges — **not** multiplied into FG again (avoids double-counting player rates).  
-8. **B2B / rest (optional):** when tip date is set, yesterday’s slate (schedule only) → if team played, pace −1 and ORtg ×0.985. Disable with `--no-rest`.  
-9. **OT:** if tied after regulation, up to 3× (12 possessions each); then +1 coin-flip. Every sim has a winner.
+6. **Opponent adj:** FG/3P × `(opp_DRtg / league)` once, clipped to `[0.94, 1.06]`.
+7. **Positional D + size:** slot height mismatch (G/F/C) and frontcourt size → mild 2P/3P/OREB.
+8. **Hustle:** opp deflections → TOV mult; contested shots → FG contest (no-op if missing).
+9. **Coach style:** derived from pace/3PAR/DRtg → three tilt + defensive TOV pressure.
+10. **B2B / travel:** tip date set → yesterday slate; road B2B / 3-in-4 stronger FG+pace haircut. `--no-rest` disables.
+11. **OT:** up to 3× (12 possessions each); then +1 coin-flip.
 
 ### Betting line math (when provided)
 
@@ -112,17 +117,22 @@ Possession Monte Carlo (not independent Normal team scores).
 - Over iff `home + away > total`.
 - Pushes tracked separately. No live odds pull in v1 — CLI flags / CSV only.
 
-### Injuries (v1)
+### Injuries (v1.1)
 
-- `--injuries`: ESPN unofficial feed. Out/Doubtful/IR → ×0; Questionable → ×0.5; Probable → ×1.
-- `--injuries-csv`: `name,team,status[,mult]`.
+- **Default on** for live runs; **off** for `--fixtures`. Override: `--injuries` / `--no-injuries`.
+- ESPN unofficial feed. Out/Doubtful/IR → ×0; Questionable → ×0.5; Probable → ×1.
+- `--injuries-csv`: `name,team,status[,mult]` (forces on).
 - Limitations: name fuzzy-match; feed can lag; not NBA.com official.
+
+### Calibration
+
+`nba_sim/calibrate.py` flags mean total outside ~208–242, extreme p10/p90, and flattened top-scorer share. Attached to `audit.calibration` (text + JSON). Does **not** use tip-game results.
 
 Full leak/bias/consistency checklist: [realism-audit.md](./realism-audit.md).
 
 ## Follow-ups
 
 1. Official NBA injury/inactive report when a stable public source is available.
-2. Live closing lines feed (optional) in addition to `--spread`/`--total`/`--lines-csv`.
-3. Rest / B2B when `--date` is set.
-4. Home FG boost magnitude tuning.
+2. `LeagueDashPtDefend` / season matchups for shot-location defense.
+3. Live closing lines feed (optional).
+4. Home FG boost magnitude tuning vs market.

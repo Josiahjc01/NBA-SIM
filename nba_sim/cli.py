@@ -120,16 +120,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional path to a fixture JSON (implies offline fixture mode).",
     )
 
-    # Injuries
+    # Injuries — default ON for live runs; off for --fixtures unless forced.
     p.add_argument(
         "--injuries",
-        action="store_true",
-        help="Pull live ESPN injury feed and zero/reduce minutes (Out/Doubtful/Questionable).",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "ESPN injury feed (Out/Doubtful→0 min, Questionable→×0.5). "
+            "Default: on for live, off for --fixtures. Use --no-injuries to skip."
+        ),
     )
     p.add_argument(
         "--injuries-csv",
         default=None,
-        help="Optional injuries CSV: name,team,status[,mult]. Overrides --injuries source.",
+        help="Optional injuries CSV: name,team,status[,mult]. Overrides live ESPN source.",
     )
 
     # Betting lines
@@ -153,13 +157,23 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _want_injuries(args) -> bool:
+    """Auto: live on, fixtures off; --injuries/--no-injuries override; CSV forces on."""
+    if args.injuries_csv:
+        return True
+    if args.injuries is not None:
+        return bool(args.injuries)
+    return not bool(getattr(args, "fixtures", False) or getattr(args, "fixture_file", None))
+
+
 def _apply_injury_flags(matchup, args):
-    if args.injuries or args.injuries_csv:
-        apply_injuries(
-            matchup,
-            live=bool(args.injuries) and not args.injuries_csv,
-            csv_path=args.injuries_csv,
-        )
+    if not _want_injuries(args):
+        return matchup
+    apply_injuries(
+        matchup,
+        live=not bool(args.injuries_csv),
+        csv_path=args.injuries_csv,
+    )
     return matchup
 
 
@@ -204,6 +218,11 @@ def _run_one_matchup(
         fixture_path=args.fixture_file,
     )
     _apply_injury_flags(matchup, args)
+    if matchup.injury_notes:
+        for n in matchup.injury_notes[:8]:
+            _log(args, f"  injury: {n}")
+        if len(matchup.injury_notes) > 8:
+            _log(args, f"  injury: … +{len(matchup.injury_notes) - 8} more")
     _apply_rest_flags(matchup, game_date, args)
     issues = validate_matchup(matchup)
     hard = [i for i in issues if "only" in i or "identical" in i]

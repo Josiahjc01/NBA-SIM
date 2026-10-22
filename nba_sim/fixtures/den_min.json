@@ -36,7 +36,8 @@
         "weight_lb": 210,
         "usg_pct": 18.0,
         "ts_pct": 0.56,
-        "efg_pct": 0.54
+        "efg_pct": 0.54,
+        "position": "F"
       },
       {
         "player_id": 1626157,
@@ -63,7 +64,8 @@
         "weight_lb": 210,
         "usg_pct": 18.0,
         "ts_pct": 0.56,
-        "efg_pct": 0.54
+        "efg_pct": 0.54,
+        "position": "F"
       },
       {
         "player_id": 203952,
@@ -90,7 +92,8 @@
         "weight_lb": 210,
         "usg_pct": 18.0,
         "ts_pct": 0.56,
-        "efg_pct": 0.54
+        "efg_pct": 0.54,
+        "position": "F"
       },
       {
         "player_id": 1627732,
@@ -117,7 +120,8 @@
         "weight_lb": 210,
         "usg_pct": 18.0,
         "ts_pct": 0.56,
-        "efg_pct": 0.54
+        "efg_pct": 0.54,
+        "position": "F"
       },
       {
         "player_id": 1629020,
@@ -144,7 +148,8 @@
         "weight_lb": 210,
         "usg_pct": 18.0,
         "ts_pct": 0.56,
-        "efg_pct": 0.54
+        "efg_pct": 0.54,
+        "position": "F"
       },
       {
         "player_id": 1629675,
@@ -171,7 +176,8 @@
         "weight_lb": 210,
         "usg_pct": 18.0,
         "ts_pct": 0.56,
-        "efg_pct": 0.54
+        "efg_pct": 0.54,
+        "position": "F"
       },
       {
         "player_id": 1630180,
@@ -198,7 +204,8 @@
         "weight_lb": 210,
         "usg_pct": 18.0,
         "ts_pct": 0.56,
-        "efg_pct": 0.54
+        "efg_pct": 0.54,
+        "position": "F"
       },
       {
         "player_id": 1627827,
@@ -225,10 +232,13 @@
         "weight_lb": 210,
         "usg_pct": 18.0,
         "ts_pct": 0.56,
-        "efg_pct": 0.54
+        "efg_pct": 0.54,
+        "position": "F"
       }
     ],
-    "coach_name": "Coach"
+    "coach_name": "Coach",
+    "deflections_pg": 12.0,
+    "contested_shots_pg": 45.0
   },
   "away": {
     "team_id": 1610612743,
@@ -263,7 +273,8 @@
         "weight_lb": 210,
         "usg_pct": 18.0,
         "ts_pct": 0.56,
-        "efg_pct": 0.54
+        "efg_pct": 0.54,
+        "position": "F"
       },
       {
         "player_id": 1627750,
@@ -290,7 +301,8 @@
         "weight_lb": 210,
         "usg_pct": 18.0,
         "ts_pct": 0.56,
-        "efg_pct": 0.54
+        "efg_pct": 0.54,
+        "position": "F"
       },
       {
         "player_id": 203932,
@@ -317,7 +329,8 @@
         "weight_lb": 210,
         "usg_pct": 18.0,
         "ts_pct": 0.56,
-        "efg_pct": 0.54
+        "efg_pct": 0.54,
+        "position": "F"
       },
       {
         "player_id": 1629008,
@@ -344,7 +357,8 @@
         "weight_lb": 210,
         "usg_pct": 18.0,
         "ts_pct": 0.56,
-        "efg_pct": 0.54
+        "efg_pct": 0.54,
+        "position": "F"
       },
       {
         "player_id": 1628420,
@@ -371,7 +385,8 @@
         "weight_lb": 210,
         "usg_pct": 18.0,
         "ts_pct": 0.56,
-        "efg_pct": 0.54
+        "efg_pct": 0.54,
+        "position": "F"
       },
       {
         "player_id": 203486,
@@ -398,7 +413,8 @@
         "weight_lb": 210,
         "usg_pct": 18.0,
         "ts_pct": 0.56,
-        "efg_pct": 0.54
+        "efg_pct": 0.54,
+        "position": "F"
       },
       {
         "player_id": 1627826,
@@ -425,7 +441,8 @@
         "weight_lb": 210,
         "usg_pct": 18.0,
         "ts_pct": 0.56,
-        "efg_pct": 0.54
+        "efg_pct": 0.54,
+        "position": "F"
       },
       {
         "player_id": 1627751,
@@ -452,9 +469,12 @@
         "weight_lb": 210,
         "usg_pct": 18.0,
         "ts_pct": 0.56,
-        "efg_pct": 0.54
+        "efg_pct": 0.54,
+        "position": "F"
       }
     ],
-    "coach_name": "Coach"
+    "coach_name": "Coach",
+    "deflections_pg": 12.0,
+    "contested_shots_pg": 45.0
   }
 }

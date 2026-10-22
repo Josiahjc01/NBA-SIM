@@ -36,7 +36,8 @@
         "weight_lb": 195,
         "usg_pct": 29.5,
         "ts_pct": 0.575,
-        "efg_pct": 0.5549999999999999
+        "efg_pct": 0.5549999999999999,
+        "position": "G"
       },
       {
         "player_id": 1627741,
@@ -63,7 +64,8 @@
         "weight_lb": 240,
         "usg_pct": 24.0,
         "ts_pct": 0.64,
-        "efg_pct": 0.62
+        "efg_pct": 0.62,
+        "position": "C"
       },
       {
         "player_id": 1628983,
@@ -90,7 +92,8 @@
         "weight_lb": 225,
         "usg_pct": 18.5,
         "ts_pct": 0.555,
-        "efg_pct": 0.535
+        "efg_pct": 0.535,
+        "position": "F"
       },
       {
         "player_id": 203992,
@@ -117,7 +120,8 @@
         "weight_lb": 220,
         "usg_pct": 26.0,
         "ts_pct": 0.58,
-        "efg_pct": 0.5599999999999999
+        "efg_pct": 0.5599999999999999,
+        "position": "F"
       },
       {
         "player_id": 1630169,
@@ -144,7 +148,8 @@
         "weight_lb": 200,
         "usg_pct": 22.0,
         "ts_pct": 0.565,
-        "efg_pct": 0.5449999999999999
+        "efg_pct": 0.5449999999999999,
+        "position": "G"
       },
       {
         "player_id": 1629011,
@@ -171,7 +176,8 @@
         "weight_lb": 210,
         "usg_pct": 14.0,
         "ts_pct": 0.545,
-        "efg_pct": 0.525
+        "efg_pct": 0.525,
+        "position": "G"
       },
       {
         "player_id": 1631099,
@@ -198,7 +204,8 @@
         "weight_lb": 175,
         "usg_pct": 12.0,
         "ts_pct": 0.56,
-        "efg_pct": 0.54
+        "efg_pct": 0.54,
+        "position": "G"
       },
       {
         "player_id": 1629655,
@@ -225,7 +232,8 @@
         "weight_lb": 234,
         "usg_pct": 13.0,
         "ts_pct": 0.54,
-        "efg_pct": 0.52
+        "efg_pct": 0.52,
+        "position": "F"
       },
       {
         "player_id": 1630596,
@@ -252,10 +260,13 @@
         "weight_lb": 265,
         "usg_pct": 16.0,
         "ts_pct": 0.61,
-        "efg_pct": 0.59
+        "efg_pct": 0.59,
+        "position": "C"
       }
     ],
-    "coach_name": "Mike Brown"
+    "coach_name": "Mike Brown",
+    "deflections_pg": 14.0,
+    "contested_shots_pg": 48.0
   },
   "away": {
     "team_id": 1610612746,
@@ -290,7 +301,8 @@
         "weight_lb": 220,
         "usg_pct": 28.0,
         "ts_pct": 0.585,
-        "efg_pct": 0.565
+        "efg_pct": 0.565,
+        "position": "F"
       },
       {
         "player_id": 201935,
@@ -317,7 +329,8 @@
         "weight_lb": 220,
         "usg_pct": 27.0,
         "ts_pct": 0.6,
-        "efg_pct": 0.58
+        "efg_pct": 0.58,
+        "position": "G"
       },
       {
         "player_id": 202695,
@@ -344,7 +357,8 @@
         "weight_lb": 225,
         "usg_pct": 29.0,
         "ts_pct": 0.61,
-        "efg_pct": 0.59
+        "efg_pct": 0.59,
+        "position": "F"
       },
       {
         "player_id": 1627826,
@@ -371,7 +385,8 @@
         "weight_lb": 240,
         "usg_pct": 18.0,
         "ts_pct": 0.665,
-        "efg_pct": 0.645
+        "efg_pct": 0.645,
+        "position": "C"
       },
       {
         "player_id": 1629611,
@@ -398,7 +413,8 @@
         "weight_lb": 215,
         "usg_pct": 24.0,
         "ts_pct": 0.595,
-        "efg_pct": 0.575
+        "efg_pct": 0.575,
+        "position": "G"
       },
       {
         "player_id": 1627732,
@@ -425,7 +441,8 @@
         "weight_lb": 240,
         "usg_pct": 12.0,
         "ts_pct": 0.56,
-        "efg_pct": 0.54
+        "efg_pct": 0.54,
+        "position": "F"
       },
       {
         "player_id": 1628991,
@@ -452,7 +469,8 @@
         "weight_lb": 210,
         "usg_pct": 12.0,
         "ts_pct": 0.555,
-        "efg_pct": 0.535
+        "efg_pct": 0.535,
+        "position": "F"
       },
       {
         "player_id": 1631111,
@@ -479,7 +497,8 @@
         "weight_lb": 205,
         "usg_pct": 12.5,
         "ts_pct": 0.53,
-        "efg_pct": 0.51
+        "efg_pct": 0.51,
+        "position": "G"
       },
       {
         "player_id": 1628971,
@@ -506,9 +525,12 @@
         "weight_lb": 210,
         "usg_pct": 14.0,
         "ts_pct": 0.57,
-        "efg_pct": 0.5499999999999999
+        "efg_pct": 0.5499999999999999,
+        "position": "F"
       }
     ],
-    "coach_name": "Tyronn Lue"
+    "coach_name": "Tyronn Lue",
+    "deflections_pg": 13.0,
+    "contested_shots_pg": 52.0
   }
 }

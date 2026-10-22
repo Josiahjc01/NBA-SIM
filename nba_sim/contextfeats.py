@@ -211,6 +211,15 @@ def build_matchup_notes(
             f"Pace clash: {away.abbreviation} {away.pace:.1f} vs "
             f"{home.abbreviation} {home.pace:.1f} → game ~{notes.pace_compromise:.1f}"
         )
+    h_def = float(getattr(home, "deflections_pg", 0.0) or 0.0)
+    a_def = float(getattr(away, "deflections_pg", 0.0) or 0.0)
+    h_con = float(getattr(home, "contested_shots_pg", 0.0) or 0.0)
+    a_con = float(getattr(away, "contested_shots_pg", 0.0) or 0.0)
+    if h_def > 0 or a_def > 0 or h_con > 0 or a_con > 0:
+        notes.lines.append(
+            f"Hustle: {away.abbreviation} defl {a_def:.1f}/cont {a_con:.0f}  |  "
+            f"{home.abbreviation} defl {h_def:.1f}/cont {h_con:.0f}"
+        )
     return notes
 
 

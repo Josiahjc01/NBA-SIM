@@ -109,17 +109,28 @@ Live odds feeds are not wired; pass lines via flags or `--lines-csv` for slate.
 
 You do **not** pass player stats or box scores. If live fetch fails, the CLI errors (no silent fixture fallback).
 
-### Matchup context (heights, advanced, coaching)
+### Matchup context (heights, advanced, coaching, hustle)
 
 On live loads the sim also pulls:
 
 | Signal | Source | Effect (mild / clipped) |
 |--------|--------|-------------------------|
-| Height / weight | `CommonTeamRoster` | Frontcourt size → 2P% + OREB |
+| Height / weight / position | `CommonTeamRoster` | Frontcourt + **slot D** (G/F/C) → 2P/3P contest |
 | USG% / TS% / eFG% | `LeagueDashPlayerStats` Advanced | Usage blend + finishing |
+| Hustle | `LeagueHustleStatsTeam` | Deflections → TOV; contested → FG |
 | Head coach + style | `TeamInfoCommon` + pace/3PAR/DRtg | 3PA tilt, TOV pressure, pace notes |
+| Rest / travel | Yesterday (+ tip−3) slate only | B2B, road B2B, 3-in-4 FG/pace |
+| Injuries | ESPN (default **on** live) | Out/Doubtful→0; Q→×0.5; `--no-injuries` to skip |
 
-Styles are derived (push-pace / grind / live-by-three / paint-first / defense-first), not a full playbook database. Report prints a **Matchup context** block.
+Styles are derived (push-pace / grind / live-by-three / paint-first / defense-first), not a full playbook database. Report prints **Matchup context** + calibration flags.
+
+```bash
+# Fresh live pull (recommended after upgrades)
+python -m nba_sim --home LAC --away SAC --date 2026-10-22 --n 5000 --seed 42 --no-cache
+
+# Skip injuries / rest
+python -m nba_sim --home LAC --away SAC --no-injuries --no-rest --n 5000
+```
 
 ## Output
 

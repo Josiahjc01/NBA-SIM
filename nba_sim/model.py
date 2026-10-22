@@ -243,6 +243,13 @@ def _build_context(
         team_three_par,
         ts_shot_multiplier,
     )
+    from nba_sim.defense import (
+        HustleProfile,
+        build_positional_defense,
+        hustle_contest_multiplier,
+        hustle_tov_multiplier,
+        positional_fg_multipliers,
+    )
 
     rot = _rotation(team)
     lines = [
@@ -320,6 +327,8 @@ def _build_context(
     )
     three_mult = coach_three_multiplier(own_style.three_tilt)
     opp_tov_mult = 1.0
+    opp_contest = 1.0
+    opp_pos_def = build_positional_defense(opp_team) if opp_team is not None else None
     if opp_team is not None:
         opp_style = derive_coach_style(
             coach_name=getattr(opp_team, "coach_name", "") or "",
@@ -330,6 +339,12 @@ def _build_context(
             ),
         )
         opp_tov_mult = coach_tov_pressure_multiplier(opp_style.defense_tilt)
+        opp_hustle = HustleProfile(
+            deflections_pg=float(getattr(opp_team, "deflections_pg", 0.0) or 0.0),
+            contested_pg=float(getattr(opp_team, "contested_shots_pg", 0.0) or 0.0),
+        )
+        opp_tov_mult *= hustle_tov_multiplier(opp_hustle)
+        opp_contest = hustle_contest_multiplier(opp_hustle)
 
     fg2, fg3, three_rate, ft = [], [], [], []
     tov_num = tov_den = 0.0
@@ -345,8 +360,21 @@ def _build_context(
         # Solve rough: FG ≈ (1-tr)*fg2 + tr*g3  → fg2
         fg2_p = (g - tr * g3) / max(1.0 - tr, 0.15)
         ts_mult = ts_shot_multiplier(float(getattr(p, "ts_pct", 0.0) or 0.0))
-        fg2_p = _clip(fg2_p * shot_adj * fg2_size * ts_mult, FG_FLOOR, FG_CEIL)
-        g3 = _clip(g3 * shot_adj * ts_mult, FG3_FLOOR, FG3_CEIL)
+        pos_fg2 = pos_fg3 = 1.0
+        if opp_pos_def is not None:
+            pos_fg2, pos_fg3 = positional_fg_multipliers(
+                p, float(getattr(p, "height_in", 0.0) or 0.0), opp_pos_def
+            )
+        fg2_p = _clip(
+            fg2_p * shot_adj * fg2_size * ts_mult * pos_fg2 * opp_contest,
+            FG_FLOOR,
+            FG_CEIL,
+        )
+        g3 = _clip(
+            g3 * shot_adj * ts_mult * pos_fg3 * opp_contest,
+            FG3_FLOOR,
+            FG3_CEIL,
+        )
         fg2.append(fg2_p)
         fg3.append(g3)
         three_rate.append(tr)
@@ -642,7 +670,7 @@ def run_simulations(
     home_wp = home_wins / n
     away_wp = away_wins / n
 
-    return SimSummary(
+    summary = SimSummary(
         n=n,
         home_abbr=matchup.home.abbreviation,
         away_abbr=matchup.away.abbreviation,
@@ -678,6 +706,10 @@ def run_simulations(
         mean_margin=float(home_scores.mean() - away_scores.mean()),
         priors_fingerprint=matchup_fingerprint(matchup),
     )
+    from nba_sim.calibrate import audit_calibration
+
+    summary.audit["calibration"] = audit_calibration(summary)
+    return summary
 
 
 def _audit_batch(results: Sequence[GameResult], matchup: MatchupData) -> dict:
@@ -717,8 +749,8 @@ def _audit_batch(results: Sequence[GameResult], matchup: MatchupData) -> dict:
         "drtg_mechanism": "FG/3P × clip(opp_DRtg/league, 0.94, 1.06); higher DRtg (worse D) boosts offense",
         "ortg_mechanism": "team ORtg not re-applied to FG (already in player rates; avoids double-count)",
         "matchup_context": (
-            "heights (frontcourt size → 2P/OREB), USG%/TS% blend, "
-            "coach style from pace/3PAR/DRtg (three tilt + TOV pressure)"
+            "heights + positional slot D, hustle (deflections/contested), "
+            "USG%/TS%, coach style (pace/3PAR/DRtg), B2B/travel rest"
         ),
         "tie_break": f"up to {MAX_OT_PERIODS} OT periods ({OT_POSSESSIONS} poss/side); then +1 coin-flip",
         "data_note": f"priors from matchup source={matchup.source} season={matchup.season}",

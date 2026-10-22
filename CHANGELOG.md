@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0
+- Positional defense: G/F/C slot heights → contest/finish multipliers
+- Hustle proxies: `LeagueHustleStatsTeam` deflections → TOV; contested → FG
+- Rest: road B2B + 3-in-4 travel stacks (still schedule-only, no box leak)
+- Injuries **default on** for live (`--no-injuries` to skip; fixtures stay off)
+- Calibration audit: mean total/team bands + star-share warn in report/JSON
+- Cache key `blendv5`
+
 ## 0.3.9
 - Matchup context layer (`nba_sim/contextfeats.py`):
   - Player heights/weights from roster; frontcourt size → mild 2P/OREB adj
