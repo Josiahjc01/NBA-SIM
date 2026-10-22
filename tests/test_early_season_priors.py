@@ -91,8 +91,11 @@ class RookieTableTests(unittest.TestCase):
     def test_rookie_row_guard(self):
         row = rookie_prior_row("G", player_id=99, name="Prospect")
         self.assertEqual(row["PLAYER_ID"], 99)
-        self.assertGreater(row["PTS"], 5)
-        self.assertGreater(row["MIN"], 10)
+        self.assertGreater(row["PTS"], 4)
+        self.assertGreater(row["MIN"], 8)
+        # Bench-level bases — must not look like 20+ min starters by default
+        self.assertLess(row["MIN"], 18)
+        self.assertTrue(row.get("_archetype_only"))
 
     def test_draft_scale_lottery_vs_undrafted(self):
         self.assertGreater(draft_production_scale(1), draft_production_scale(40))
@@ -100,6 +103,8 @@ class RookieTableTests(unittest.TestCase):
         late = rookie_prior_row("G", overall_pick=45)
         self.assertGreater(top["PTS"], late["PTS"])
         self.assertGreater(top["MIN"], late["MIN"])
+        self.assertLessEqual(top["MIN"], 24.0)
+        self.assertLessEqual(top["PTS"], 14.0)
 
 
 class BlendRatesTests(unittest.TestCase):
@@ -179,9 +184,12 @@ class BuildTeamBlendTests(unittest.TestCase):
         self.assertTrue(rook.is_rookie)
         self.assertGreater(rook.blend_weights.get("rookie", 0), 0)
         self.assertGreater(rook.blend_weights.get("pre", 0), 0)
-        # Rookie PTS between archetype and preseason
-        self.assertGreater(rook.pts, 11.0)
+        # Rookie PTS between bench archetype and preseason
+        self.assertGreater(rook.pts, 8.0)
         self.assertLess(rook.pts, 16.0)
+        # Preseason evidence → not archetype_only
+        self.assertFalse(rook.archetype_only)
+        self.assertGreater(rook.evidence_min, 0.0)
         vet = next(p for p in built.players if p.player_id == 1)
         self.assertFalse(vet.is_rookie)
         self.assertGreater(vet.blend_weights.get("last", 0), 0.5)

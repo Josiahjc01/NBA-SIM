@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.8
+- Realism: stop archetype rookies from crowding rotations / diluting stars
+  - Bench-level rookie priors; softer draft scales; lower `K_ROOKIE`
+  - `archetype_only` flag; max 2 in rotation; usage + minutes down-weight
+  - Mild usage concentration; early team ORtg/DRtg shrink toward league
+  - Cache key `blendv3` (invalidate stale matchup caches)
+- Fixes Kings@Clippers box pathologies (Sabonis ~13 PPG, Wagler/Miller/Acuff leading)
+
 ## 0.3.7
 - Win% stability: binomial Monte Carlo SE in report/JSON; priors fingerprint
 - Same seed + same fingerprint + same N ⇒ bit-stable win% (regression tested)

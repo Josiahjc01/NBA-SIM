@@ -84,6 +84,10 @@ class PlayerSeason:
     # Serialized blend weights (reg/last/pre/rookie) when applicable.
     blend_weights: dict = field(default_factory=dict)
     is_rookie: bool = False
+    # True when rates are mostly synthetic expected-production (no last/reg).
+    archetype_only: bool = False
+    # Minutes from reg/last/pre only (0 if pure archetype) — rotation sorting.
+    evidence_min: float = 0.0
 
 
 @dataclass
@@ -339,6 +343,15 @@ def _player_from_blended_rates(
     ft_pct = rates.get("ft_pct", 0.75) or 0.75
     if ft_pct <= 0:
         ft_pct = 0.75
+    # Pure/mostly synthetic expected-production — no meaningful NBA/pre evidence.
+    # Preseason minutes ≥8 count as real enough to leave the archetype penalty.
+    evidence = float(rates.get("evidence_min", 0.0) or 0.0)
+    archetype_only = (
+        weights.rookie > 0.0
+        and weights.last < 0.05
+        and weights.reg < 0.05
+        and evidence < 8.0
+    )
     return PlayerSeason(
         player_id=player_id,
         name=name,
@@ -363,6 +376,8 @@ def _player_from_blended_rates(
         prior_season=prior_label,
         blend_weights=weights.as_dict(),
         is_rookie=is_rookie,
+        archetype_only=archetype_only,
+        evidence_min=float(rates.get("evidence_min", 0.0)),
     )
 
 
@@ -745,7 +760,7 @@ def _load_live(
     date_to = _date_to_param(cutoff)
     fb_season = fallback_season_for(season)
     cache_key = (
-        f"matchup_blendv2_{season}_fb{fb_season if allow_fallback else 'off'}_"
+        f"matchup_blendv3_{season}_fb{fb_season if allow_fallback else 'off'}_"
         f"{home['id']}_{away['id']}_"
         f"asof_{cutoff.isoformat() if cutoff else 'latest'}"
     )
@@ -939,6 +954,8 @@ def _team_from_dict(d: dict[str, Any]) -> TeamSeason:
         kwargs.setdefault("injury_status", "")
         kwargs.setdefault("blend_weights", {})
         kwargs.setdefault("is_rookie", False)
+        kwargs.setdefault("archetype_only", False)
+        kwargs.setdefault("evidence_min", float(kwargs.get("min") or 0.0))
         allowed = set(PlayerSeason.__dataclass_fields__)
         kwargs = {k: v for k, v in kwargs.items() if k in allowed}
         players.append(PlayerSeason(**kwargs))

@@ -29,7 +29,9 @@ from typing import Any
 K_LAST = 25.0  # last season ≈ 25 games of evidence at tip-off
 K_PRE = 6.0  # max preseason weight once a few pre games exist
 PRE_GP_CAP = 4.0  # preseason GP saturates weight by this many games
-K_ROOKIE = 15.0  # position archetype prior strength for rookies
+# Keep below K_LAST so pure archetypes do not outrank veterans at tip-off.
+K_ROOKIE = 10.0  # position archetype prior strength for rookies
+K_TEAM_ADV = 12.0  # shrink team ORtg/DRtg toward league when early GP thin
 
 # Rate fields blended as weighted averages (per-game rates / percentages)
 BLEND_FIELDS = (
@@ -50,61 +52,62 @@ BLEND_FIELDS = (
     "ft_pct",
 )
 
-# Rookie expected production by coarse position (NBA-ish early-rotation priors).
-# Used only when the player has no usable last-season NBA row.
+# Rookie expected production by coarse position — **bench-level** bases.
+# Lottery scale can lift top picks toward low-end starter minutes; deep roster
+# rookies must not crowd veterans out of the sim rotation (see model._rotation).
 ROOKIE_BY_POSITION: dict[str, dict[str, float]] = {
     "G": {
-        "gp": 50,
-        "min": 22.0,
-        "pts": 11.0,
-        "reb": 3.0,
-        "oreb": 0.5,
-        "dreb": 2.5,
-        "ast": 3.5,
-        "tov": 1.8,
-        "fga": 9.5,
-        "fgm": 4.0,
-        "fg_pct": 0.420,
-        "fg3a": 4.0,
-        "fg3m": 1.4,
-        "fg3_pct": 0.350,
-        "fta": 2.0,
-        "ft_pct": 0.780,
-    },
-    "F": {
-        "gp": 50,
-        "min": 20.0,
-        "pts": 10.0,
-        "reb": 5.0,
-        "oreb": 1.2,
-        "dreb": 3.8,
-        "ast": 1.8,
+        "gp": 1,  # synthetic evidence only — not real NBA GP
+        "min": 14.0,
+        "pts": 7.0,
+        "reb": 2.2,
+        "oreb": 0.4,
+        "dreb": 1.8,
+        "ast": 2.5,
         "tov": 1.3,
-        "fga": 8.5,
-        "fgm": 3.8,
-        "fg_pct": 0.450,
+        "fga": 6.5,
+        "fgm": 2.7,
+        "fg_pct": 0.420,
         "fg3a": 2.8,
         "fg3m": 1.0,
         "fg3_pct": 0.350,
-        "fta": 2.0,
+        "fta": 1.4,
+        "ft_pct": 0.780,
+    },
+    "F": {
+        "gp": 1,
+        "min": 12.0,
+        "pts": 6.0,
+        "reb": 3.8,
+        "oreb": 1.0,
+        "dreb": 2.8,
+        "ast": 1.2,
+        "tov": 1.0,
+        "fga": 5.5,
+        "fgm": 2.4,
+        "fg_pct": 0.450,
+        "fg3a": 1.8,
+        "fg3m": 0.6,
+        "fg3_pct": 0.350,
+        "fta": 1.4,
         "ft_pct": 0.750,
     },
     "C": {
-        "gp": 50,
-        "min": 18.0,
-        "pts": 9.0,
-        "reb": 7.5,
-        "oreb": 2.5,
-        "dreb": 5.0,
-        "ast": 1.2,
-        "tov": 1.4,
-        "fga": 6.5,
-        "fgm": 3.4,
+        "gp": 1,
+        "min": 12.0,
+        "pts": 6.0,
+        "reb": 5.5,
+        "oreb": 2.0,
+        "dreb": 3.5,
+        "ast": 0.9,
+        "tov": 1.1,
+        "fga": 4.5,
+        "fgm": 2.3,
         "fg_pct": 0.520,
-        "fg3a": 0.8,
-        "fg3m": 0.25,
+        "fg3a": 0.5,
+        "fg3m": 0.15,
         "fg3_pct": 0.300,
-        "fta": 2.2,
+        "fta": 1.6,
         "ft_pct": 0.700,
     },
 }
@@ -187,19 +190,19 @@ def is_rookie_exp(exp: Any) -> bool:
 def draft_production_scale(overall_pick: int | None) -> float:
     """
     Scale expected production by draft capital.
-    Lottery stars > mid-first > late-first > second round / undrafted.
+    Kept modest so lottery rookies approach low-starter minutes, not max usage.
     """
     if overall_pick is None or overall_pick <= 0:
-        return 0.85  # undrafted / unknown — below average rookie
+        return 0.75  # undrafted / unknown — deep bench
     if overall_pick <= 5:
-        return 1.25
+        return 1.15
     if overall_pick <= 14:
-        return 1.10
+        return 1.05
     if overall_pick <= 30:
-        return 1.00
+        return 0.95
     if overall_pick <= 45:
-        return 0.90
-    return 0.80
+        return 0.85
+    return 0.75
 
 
 def rookie_prior_row(
@@ -215,6 +218,10 @@ def rookie_prior_row(
     # Scale counting stats + minutes; keep shooting percentages stable.
     for k in ("min", "pts", "reb", "oreb", "dreb", "ast", "tov", "fga", "fgm", "fg3a", "fg3m", "fta"):
         base[k] = float(base[k]) * scale
+    # Hard cap minutes so even #1 picks stay below typical star veterans.
+    base["min"] = min(float(base["min"]), 24.0)
+    base["pts"] = min(float(base["pts"]), 14.0)
+    base["fga"] = min(float(base["fga"]), 12.0)
     return {
         "PLAYER_ID": player_id,
         "PLAYER_NAME": name,
@@ -239,6 +246,7 @@ def rookie_prior_row(
         "_rookie_slot": slot,
         "_draft_pick": overall_pick,
         "_draft_scale": scale,
+        "_archetype_only": True,
     }
 
 
@@ -355,15 +363,39 @@ def blend_rate_rows(
             den += w
         out[field] = (num / den) if den > 0 else 0.0
 
-    # GP for downstream "usable" checks: prefer current GP, else last, else pre
+    # GP for downstream "usable" checks: real NBA/preseason only.
+    # Do NOT fall through to synthetic rookie GP — that made archetypes look
+    # like 50-game veterans and flooded rotations.
     out["gp"] = (
         _rate_from_row(reg, "gp")
         or _rate_from_row(last, "gp")
         or _rate_from_row(pre, "gp")
-        or _rate_from_row(rookie, "gp")
         or 0.0
     )
+    if out["gp"] <= 0 and weights.rookie > 0 and rookie is not None:
+        out["gp"] = 1.0  # minimal eligibility only
+    # Evidence minutes = non-archetype components (rotation prefers these).
+    ev = 0.0
+    ev_w = 0.0
+    for key, w in (("reg", weights.reg), ("last", weights.last), ("pre", weights.pre)):
+        if w <= 0:
+            continue
+        row = sources[key]
+        if row is None:
+            continue
+        ev += w * _rate_from_row(row, "min")
+        ev_w += w
+    out["evidence_min"] = (ev / ev_w) if ev_w > 0 else 0.0
     return out
+
+
+def _shrink_team_rating(value: float, gp_reg: float, league: float = 112.0) -> float:
+    """Pull extreme early-season ORtg/DRtg toward league mean."""
+    w = max(0.0, float(gp_reg))
+    # Even with last-season ratings, lightly shrink until current GP accumulates
+    # so one soft/stout DRtg gap cannot alone create ~80% favorites.
+    conf = (w + K_LAST) / (w + K_LAST + K_TEAM_ADV)
+    return conf * float(value) + (1.0 - conf) * league
 
 
 def blend_team_advanced(
@@ -382,17 +414,23 @@ def blend_team_advanced(
         return 100.0, 112.0, 112.0, "default"
     if primary is None:
         assert last is not None
-        return last[0], last[1], last[2], "last"
-    if last is None or (w_reg + w_last) <= 0:
-        return primary[0], primary[1], primary[2], "reg"
-    # If current team has essentially no GP, keep last
-    total = w_reg + w_last
-    a = w_reg / total
-    b = w_last / total
-    pace = a * primary[0] + b * last[0]
-    ortg = a * primary[1] + b * last[1]
-    drtg = a * primary[2] + b * last[2]
-    return pace, ortg, drtg, f"blend:reg={a:.2f},last={b:.2f}"
+        pace, ortg, drtg = last[0], last[1], last[2]
+        label = "last"
+    elif last is None or (w_reg + w_last) <= 0:
+        pace, ortg, drtg = primary[0], primary[1], primary[2]
+        label = "reg"
+    else:
+        # If current team has essentially no GP, keep last
+        total = w_reg + w_last
+        a = w_reg / total
+        b = w_last / total
+        pace = a * primary[0] + b * last[0]
+        ortg = a * primary[1] + b * last[1]
+        drtg = a * primary[2] + b * last[2]
+        label = f"blend:reg={a:.2f},last={b:.2f}"
+    ortg = _shrink_team_rating(ortg, w_reg)
+    drtg = _shrink_team_rating(drtg, w_reg)
+    return pace, ortg, drtg, label
 
 
 def parse_roster_meta(roster_rows: list[dict[str, Any]]) -> dict[int, RosterMeta]:

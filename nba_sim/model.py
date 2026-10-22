@@ -24,6 +24,9 @@ from nba_sim.statsutil import binomial_se, wilson_interval
 HOME_FG_BOOST = 0.015  # absolute; justified home-court shooting edge
 MIN_ROTATION = 8
 MAX_ROTATION = 10
+MAX_ARCHETYPE_IN_ROTATION = 2  # pure expected-production rookies
+ARCHETYPE_SORT_PENALTY = 0.40  # down-weight archetype minutes in rotation sort
+USAGE_CONCENTRATION = 1.20  # >1 concentrates shot share toward high-usage players
 TEAM_MINUTES_TARGET = 240.0
 REGULATION_POSSESSIONS_SCALE = 1.0
 OT_POSSESSIONS = 12  # ~5 min OT ≈ 12 poss each side roughly alternating
@@ -173,13 +176,43 @@ def _safe_norm(w: np.ndarray) -> np.ndarray:
     return w / s
 
 
+def _rotation_sort_key(p: PlayerSeason) -> float:
+    """Prefer real NBA/preseason minutes over synthetic rookie archetypes."""
+    evidence = float(getattr(p, "evidence_min", 0.0) or 0.0)
+    base = max(evidence, float(p.min) * 0.25) if evidence > 0 else float(p.min)
+    if getattr(p, "archetype_only", False):
+        base *= ARCHETYPE_SORT_PENALTY
+    return base
+
+
 def _rotation(team: TeamSeason) -> list[PlayerSeason]:
     eligible = [p for p in team.players if p.min > 0 and p.gp >= 1]
     if len(eligible) < 5:
         eligible = [p for p in team.players if p.min > 0]
-    eligible.sort(key=lambda p: p.min, reverse=True)
-    n = min(MAX_ROTATION, max(MIN_ROTATION, len(eligible)))
-    rot = eligible[:n]
+    eligible.sort(key=_rotation_sort_key, reverse=True)
+
+    # Fill rotation with veterans first; allow a few archetype rookies only.
+    rot: list[PlayerSeason] = []
+    n_arch = 0
+    target = min(MAX_ROTATION, max(MIN_ROTATION, len(eligible)))
+    for p in eligible:
+        is_arch = bool(getattr(p, "archetype_only", False))
+        if is_arch and n_arch >= MAX_ARCHETYPE_IN_ROTATION:
+            continue
+        rot.append(p)
+        if is_arch:
+            n_arch += 1
+        if len(rot) >= target:
+            break
+    # If we skipped too many archetypes and ran short, backfill anyone left.
+    if len(rot) < min(5, len(eligible)):
+        have = {p.player_id for p in rot}
+        for p in eligible:
+            if p.player_id in have:
+                continue
+            rot.append(p)
+            if len(rot) >= target:
+                break
     if len(rot) < 5:
         raise ValueError(f"{team.abbreviation}: need ≥5 players with minutes")
     return rot
@@ -192,15 +225,27 @@ def _build_context(team: TeamSeason, opp_def: float, league_def: float = 112.0) 
     ]
 
     mins = np.array([max(p.min, 0.1) for p in rot], dtype=float)
+    # Archetype-only rookies who slipped into the rotation still get fewer
+    # allocated minutes than their synthetic prior implies.
+    for i, p in enumerate(rot):
+        if getattr(p, "archetype_only", False):
+            mins[i] *= 0.70
     # Scale season per-game minutes to ~240 team minutes (5×48) without
     # inventing equal minutes — preserve relative star/bench shares.
     min_shares = _safe_norm(mins)
     alloc_min = min_shares * TEAM_MINUTES_TARGET
 
-    # Usage ∝ FGA weighted by minutes (not equal; not raw FGA alone for
-    # low-minute outliers). This is a share of possessions ended by a shot.
+    # Usage ∝ FGA weighted by minutes. Mild power concentration keeps stars
+    # from being flattened by a crowd of mid-usage bench/rookies.
     fga = np.array([max(p.fga, 0.05) for p in rot], dtype=float)
-    usage = _safe_norm(fga * np.sqrt(mins))
+    raw_usage = fga * np.sqrt(mins)
+    # Archetype-only rookies: further trim shot share even if they made rotation.
+    arch_mult = np.array(
+        [0.55 if getattr(p, "archetype_only", False) else 1.0 for p in rot],
+        dtype=float,
+    )
+    raw_usage = raw_usage * arch_mult
+    usage = _safe_norm(np.power(raw_usage, USAGE_CONCENTRATION))
 
     ast_w = _safe_norm(np.array([max(p.ast, 0.01) for p in rot], dtype=float) * mins)
     reb_raw = np.array([max(p.reb, 0.05) for p in rot], dtype=float)
