@@ -149,6 +149,8 @@ class RosterMeta:
     exp: str = ""
     is_rookie: bool = False
     draft_pick: int | None = None
+    height_in: float = 0.0
+    weight_lb: float = 0.0
 
 
 def normalize_position(pos: str | None) -> str:
@@ -434,6 +436,8 @@ def blend_team_advanced(
 
 
 def parse_roster_meta(roster_rows: list[dict[str, Any]]) -> dict[int, RosterMeta]:
+    from nba_sim.contextfeats import parse_height_inches, parse_weight_lb
+
     out: dict[int, RosterMeta] = {}
     for r in roster_rows:
         try:
@@ -451,6 +455,8 @@ def parse_roster_meta(roster_rows: list[dict[str, Any]]) -> dict[int, RosterMeta
             position=pos,
             exp=exp,
             is_rookie=is_rookie_exp(exp),
+            height_in=parse_height_inches(r.get("HEIGHT")),
+            weight_lb=parse_weight_lb(r.get("WEIGHT")),
         )
     return out
 

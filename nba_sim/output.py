@@ -63,6 +63,21 @@ def format_report(
         for n in matchup.rest_notes:
             lines.append(f"  {n}")
 
+    if matchup.matchup_notes:
+        lines.append("")
+        lines.append("Matchup context (size / coaching / pace)")
+        lines.append("-" * 64)
+        for n in matchup.matchup_notes:
+            lines.append(f"  {n}")
+        h = matchup.home
+        a = matchup.away
+        if h.frontcourt_height_in or a.frontcourt_height_in:
+            lines.append(
+                f"  Frontcourt: {a.abbreviation} {a.frontcourt_height_in:.1f}\"  |  "
+                f"{h.abbreviation} {h.frontcourt_height_in:.1f}\"   "
+                f"3PAR {a.three_par:.0%}/{h.three_par:.0%}"
+            )
+
     # Team summary with win%
     lines.append("")
     lines.append("Team results")
@@ -216,6 +231,19 @@ def summary_to_dict(summary: SimSummary, matchup: MatchupData) -> dict[str, Any]
         "audit": summary.audit,
         "injuries_applied": matchup.injuries_applied,
         "injury_notes": matchup.injury_notes,
+        "matchup_notes": matchup.matchup_notes,
+        "home_context": {
+            "coach": matchup.home.coach_name,
+            "coach_style": matchup.home.coach_style_label,
+            "three_par": matchup.home.three_par,
+            "frontcourt_height_in": matchup.home.frontcourt_height_in,
+        },
+        "away_context": {
+            "coach": matchup.away.coach_name,
+            "coach_style": matchup.away.coach_style_label,
+            "three_par": matchup.away.three_par,
+            "frontcourt_height_in": matchup.away.frontcourt_height_in,
+        },
         "lines": None
         if lp is None
         else {

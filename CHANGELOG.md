@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.9
+- Matchup context layer (`nba_sim/contextfeats.py`):
+  - Player heights/weights from roster; frontcourt size → mild 2P/OREB adj
+  - Player advanced USG%/TS%/eFG% → usage blend + finishing
+  - Coaching style from TeamInfoCommon + pace/3PAR/DRtg profile
+  - Pace-clash / size / coach notes in text + JSON
+  - Cache key `blendv4`; fixtures enriched for offline tests
+
 ## 0.3.8
 - Realism: stop archetype rookies from crowding rotations / diluting stars
   - Bench-level rookie priors; softer draft scales; lower `K_ROOKIE`

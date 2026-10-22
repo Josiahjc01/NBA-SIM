@@ -109,10 +109,23 @@ Live odds feeds are not wired; pass lines via flags or `--lines-csv` for slate.
 
 You do **not** pass player stats or box scores. If live fetch fails, the CLI errors (no silent fixture fallback).
 
+### Matchup context (heights, advanced, coaching)
+
+On live loads the sim also pulls:
+
+| Signal | Source | Effect (mild / clipped) |
+|--------|--------|-------------------------|
+| Height / weight | `CommonTeamRoster` | Frontcourt size → 2P% + OREB |
+| USG% / TS% / eFG% | `LeagueDashPlayerStats` Advanced | Usage blend + finishing |
+| Head coach + style | `TeamInfoCommon` + pace/3PAR/DRtg | 3PA tilt, TOV pressure, pace notes |
+
+Styles are derived (push-pace / grind / live-by-three / paint-first / defense-first), not a full playbook database. Report prints a **Matchup context** block.
+
 ## Output
 
 - Mean (± stdev) team scores over N sims + mean total
-- **Win%** for each team (OT breaks regulation ties)
+- **Win%** for each team (OT breaks regulation ties) + binomial SE / Wilson CI
+- Matchup context (size / coaching / pace)
 - Prior-season provenance (which players used which season)
 - Mean player MIN / PTS / REB / AST
 - Optional injury notes + cover%/over% vs lines

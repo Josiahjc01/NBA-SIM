@@ -88,6 +88,12 @@ class PlayerSeason:
     archetype_only: bool = False
     # Minutes from reg/last/pre only (0 if pure archetype) — rotation sorting.
     evidence_min: float = 0.0
+    # Biometrics + advanced (0 = unknown / unused)
+    height_in: float = 0.0
+    weight_lb: float = 0.0
+    usg_pct: float = 0.0  # 0–100 NBA scale
+    ts_pct: float = 0.0  # 0–1
+    efg_pct: float = 0.0  # 0–1
 
 
 @dataclass
@@ -103,6 +109,10 @@ class TeamSeason:
     team_stats_season: str = ""
     # Multiplier on FG/3P make% (e.g. B2B fatigue); default 1.0.
     fatigue_fg_mult: float = 1.0
+    coach_name: str = ""
+    three_par: float = 0.0  # team FG3A/FGA
+    frontcourt_height_in: float = 0.0
+    coach_style_label: str = ""
 
 
 @dataclass
@@ -117,6 +127,7 @@ class MatchupData:
     injuries_applied: bool = False
     injury_notes: list[str] = field(default_factory=list)
     rest_notes: list[str] = field(default_factory=list)
+    matchup_notes: list[str] = field(default_factory=list)
 
 
 def _cache_path(key: str) -> Path:
@@ -228,6 +239,34 @@ def _fetch_league_team_stats(
     return with_retries(f"LeagueDashTeamStats({season},{season_type})", call)
 
 
+def _fetch_league_player_advanced(
+    season: str,
+    date_to: str | None,
+    *,
+    season_type: str = "Regular Season",
+) -> list[dict[str, Any]]:
+    """USG%/TS%/eFG% etc. MeasureType=Advanced on LeagueDashPlayerStats."""
+    from nba_api.stats.endpoints import leaguedashplayerstats
+
+    def call():
+        kwargs: dict[str, Any] = endpoint_kwargs(
+            {
+                "season": season,
+                "per_mode_detailed": "PerGame",
+                "measure_type_detailed_defense": "Advanced",
+                "season_type_all_star": season_type,
+            }
+        )
+        if date_to and season_type == "Regular Season":
+            kwargs["date_to_nullable"] = date_to
+        ep = leaguedashplayerstats.LeagueDashPlayerStats(**kwargs)
+        return ep.get_normalized_dict()["LeagueDashPlayerStats"]
+
+    return with_retries(
+        f"LeagueDashPlayerStats.Advanced({season},{season_type})", call
+    )
+
+
 def _fetch_roster(team_id: int, season: str) -> list[dict[str, Any]]:
     from nba_api.stats.endpoints import commonteamroster
 
@@ -238,6 +277,35 @@ def _fetch_roster(team_id: int, season: str) -> list[dict[str, Any]]:
         return ep.get_normalized_dict()["CommonTeamRoster"]
 
     return with_retries(f"CommonTeamRoster({team_id},{season})", call)
+
+
+def _fetch_coach_name(team_id: int, season: str) -> str:
+    """Best-effort head coach from TeamInfoCommon (empty string on failure)."""
+    from nba_api.stats.endpoints import teaminfocommon
+
+    def call():
+        ep = teaminfocommon.TeamInfoCommon(
+            team_id=team_id,
+            season_nullable=season,
+            **endpoint_kwargs(),
+        )
+        data = ep.get_normalized_dict()
+        # Prefer TeamInfoCommon table; fall back to any dict with a coach key.
+        for key in ("TeamInfoCommon", "TeamDetails", "CommonTeamInfo"):
+            rows = data.get(key) or []
+            if not rows:
+                continue
+            row = rows[0]
+            for ck in ("HEADCOACH", "COACH", "COACH_NAME", "HEAD_COACH"):
+                if row.get(ck):
+                    return str(row[ck]).strip()
+        return ""
+
+    try:
+        return with_retries(f"TeamInfoCommon.coach({team_id},{season})", call) or ""
+    except Exception as exc:  # noqa: BLE001
+        _say(f"  coach fetch warning ({team_id}): {exc}")
+        return ""
 
 
 def _fetch_draft_picks(season: str) -> dict[int, int]:
@@ -643,6 +711,9 @@ def _build_team_with_fallback(
                     is_rookie=is_rookie and not has_last,
                 )
             )
+            if meta is not None:
+                p.height_in = float(meta.height_in or 0.0)
+                p.weight_lb = float(meta.weight_lb or 0.0)
             players.append(p)
             provenance.record_player(
                 team_abbr=abbr,
@@ -682,6 +753,9 @@ def _build_team_with_fallback(
         p = _clip_player_rates(_player_from_row(row, abbr, prior_season=season_used))
         p.team_id = tid
         p.team_abbr = abbr
+        if meta is not None:
+            p.height_in = float(meta.height_in or 0.0)
+            p.weight_lb = float(meta.weight_lb or 0.0)
         players.append(p)
         provenance.record_player(
             team_abbr=abbr,
@@ -734,16 +808,71 @@ def _build_team_with_fallback(
         f"adv={team_stats_season}"
     )
 
-    return TeamSeason(
-        team_id=tid,
-        abbreviation=abbr,
-        full_name=team["full_name"],
-        pace=pace,
-        off_rating=ortg,
-        def_rating=drtg,
-        players=players,
-        team_stats_season=team_stats_season,
+    return _finalize_team_context(
+        TeamSeason(
+            team_id=tid,
+            abbreviation=abbr,
+            full_name=team["full_name"],
+            pace=pace,
+            off_rating=ortg,
+            def_rating=drtg,
+            players=players,
+            team_stats_season=team_stats_season,
+        )
     )
+
+
+def _finalize_team_context(team: TeamSeason, *, coach_name: str = "") -> TeamSeason:
+    """Attach derived coaching / size / 3PAR fields used by the matchup model."""
+    from nba_sim.contextfeats import (
+        derive_coach_style,
+        frontcourt_height,
+        team_three_par,
+    )
+
+    if coach_name:
+        team.coach_name = coach_name
+    team.three_par = team_three_par(team.players)
+    team.frontcourt_height_in = frontcourt_height(team.players)
+    style = derive_coach_style(
+        coach_name=team.coach_name,
+        pace=team.pace,
+        def_rating=team.def_rating,
+        three_par=team.three_par,
+    )
+    team.coach_style_label = style.label()
+    return team
+
+
+def _attach_player_advanced(
+    team: TeamSeason,
+    advanced_rows: list[dict[str, Any]] | None,
+) -> None:
+    """Merge USG%/TS%/eFG% onto players by id (in-place)."""
+    if not advanced_rows:
+        return
+    by_id: dict[int, dict[str, Any]] = {}
+    for row in advanced_rows:
+        try:
+            pid = int(row.get("PLAYER_ID") or 0)
+        except (TypeError, ValueError):
+            continue
+        if pid:
+            by_id[pid] = row
+    for p in team.players:
+        row = by_id.get(p.player_id)
+        if not row:
+            continue
+        usg = _f(row, "USG_PCT")
+        ts = _f(row, "TS_PCT")
+        efg = _f(row, "EFG_PCT")
+        # NBA API sometimes returns USG as 0–1, sometimes 0–100
+        if usg > 0:
+            p.usg_pct = usg * 100.0 if usg <= 1.0 else usg
+        if ts > 0:
+            p.ts_pct = ts if ts <= 1.0 else ts / 100.0
+        if efg > 0:
+            p.efg_pct = efg if efg <= 1.0 else efg / 100.0
 
 
 def _load_live(
@@ -760,7 +889,7 @@ def _load_live(
     date_to = _date_to_param(cutoff)
     fb_season = fallback_season_for(season)
     cache_key = (
-        f"matchup_blendv3_{season}_fb{fb_season if allow_fallback else 'off'}_"
+        f"matchup_blendv4_{season}_fb{fb_season if allow_fallback else 'off'}_"
         f"{home['id']}_{away['id']}_"
         f"asof_{cutoff.isoformat() if cutoff else 'latest'}"
     )
@@ -902,6 +1031,38 @@ def _load_live(
             f"Threshold={MIN_USABLE_PLAYERS}."
         )
 
+    # Player advanced (USG/TS/eFG): prefer current season, else last season.
+    adv_rows: list[dict[str, Any]] | None = None
+    try:
+        _say(f"  fetching player advanced rates ({season}) ...")
+        adv_rows = _fetch_league_player_advanced(season, date_to)
+    except Exception as exc:  # noqa: BLE001
+        _say(f"  advanced current warning: {exc}")
+        adv_rows = None
+    if not adv_rows and allow_fallback and fallback_player_rows is not None:
+        try:
+            _say(f"  fetching player advanced rates ({fb_season}) ...")
+            adv_rows = _fetch_league_player_advanced(fb_season, None)
+        except Exception as exc:  # noqa: BLE001
+            _say(f"  advanced last-season warning: {exc}")
+            adv_rows = None
+    _attach_player_advanced(home_t, adv_rows)
+    _attach_player_advanced(away_t, adv_rows)
+
+    # Head coaches (best-effort)
+    home_coach = _fetch_coach_name(int(home["id"]), season) or _fetch_coach_name(
+        int(home["id"]), fb_season
+    )
+    away_coach = _fetch_coach_name(int(away["id"]), season) or _fetch_coach_name(
+        int(away["id"]), fb_season
+    )
+    _finalize_team_context(home_t, coach_name=home_coach)
+    _finalize_team_context(away_t, coach_name=away_coach)
+
+    from nba_sim.contextfeats import build_matchup_notes
+
+    ctx_notes = build_matchup_notes(home_t, away_t)
+
     md = MatchupData(
         season=season,
         home=home_t,
@@ -910,12 +1071,15 @@ def _load_live(
         as_of=cutoff.isoformat() if cutoff else None,
         game_date=game_date.isoformat() if game_date else None,
         provenance=provenance,
+        matchup_notes=list(ctx_notes.lines),
     )
     _write_cache(cache_key, _matchup_to_dict(md))
     _say(
         f"  live OK: {home_t.abbreviation} n={len(home_t.players)} "
         f"{away_t.abbreviation} n={len(away_t.players)} season={season}"
     )
+    for line in ctx_notes.lines:
+        _say(f"  matchup: {line}")
     for line in provenance.summary_lines():
         _say(f"  prior: {line}")
     return md
@@ -941,6 +1105,7 @@ def _matchup_to_dict(md: MatchupData) -> dict[str, Any]:
         "injuries_applied": md.injuries_applied,
         "injury_notes": md.injury_notes,
         "rest_notes": md.rest_notes,
+        "matchup_notes": md.matchup_notes,
     }
 
 
@@ -956,10 +1121,15 @@ def _team_from_dict(d: dict[str, Any]) -> TeamSeason:
         kwargs.setdefault("is_rookie", False)
         kwargs.setdefault("archetype_only", False)
         kwargs.setdefault("evidence_min", float(kwargs.get("min") or 0.0))
+        kwargs.setdefault("height_in", 0.0)
+        kwargs.setdefault("weight_lb", 0.0)
+        kwargs.setdefault("usg_pct", 0.0)
+        kwargs.setdefault("ts_pct", 0.0)
+        kwargs.setdefault("efg_pct", 0.0)
         allowed = set(PlayerSeason.__dataclass_fields__)
         kwargs = {k: v for k, v in kwargs.items() if k in allowed}
         players.append(PlayerSeason(**kwargs))
-    return TeamSeason(
+    team = TeamSeason(
         team_id=int(d["team_id"]),
         abbreviation=d["abbreviation"],
         full_name=d["full_name"],
@@ -969,7 +1139,12 @@ def _team_from_dict(d: dict[str, Any]) -> TeamSeason:
         players=players,
         team_stats_season=str(d.get("team_stats_season") or ""),
         fatigue_fg_mult=float(d.get("fatigue_fg_mult", 1.0) or 1.0),
+        coach_name=str(d.get("coach_name") or ""),
+        three_par=float(d.get("three_par") or 0.0),
+        frontcourt_height_in=float(d.get("frontcourt_height_in") or 0.0),
+        coach_style_label=str(d.get("coach_style_label") or ""),
     )
+    return _finalize_team_context(team, coach_name=team.coach_name)
 
 
 def _matchup_from_dict(d: dict[str, Any], source: str | None = None) -> MatchupData:
@@ -982,10 +1157,17 @@ def _matchup_from_dict(d: dict[str, Any], source: str | None = None) -> MatchupD
             players=list(raw.get("players") or []),
             team_notes=dict(raw.get("team_notes") or {}),
         )
+    home_t = _team_from_dict(d["home"])
+    away_t = _team_from_dict(d["away"])
+    notes = list(d.get("matchup_notes") or [])
+    if not notes:
+        from nba_sim.contextfeats import build_matchup_notes
+
+        notes = list(build_matchup_notes(home_t, away_t).lines)
     return MatchupData(
         season=d["season"],
-        home=_team_from_dict(d["home"]),
-        away=_team_from_dict(d["away"]),
+        home=home_t,
+        away=away_t,
         source=source or d.get("source", "cache"),
         as_of=d.get("as_of"),
         game_date=d.get("game_date"),
@@ -993,6 +1175,7 @@ def _matchup_from_dict(d: dict[str, Any], source: str | None = None) -> MatchupD
         injuries_applied=bool(d.get("injuries_applied", False)),
         injury_notes=list(d.get("injury_notes") or []),
         rest_notes=list(d.get("rest_notes") or []),
+        matchup_notes=notes,
     )
 
 

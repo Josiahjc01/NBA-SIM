@@ -66,11 +66,19 @@ def matchup_fingerprint(matchup: MatchupData) -> str:
             f"{team.abbreviation}:{team.pace:.3f}:{team.off_rating:.3f}:"
             f"{team.def_rating:.3f}:{getattr(team, 'fatigue_fg_mult', 1.0):.4f}"
         )
+        parts.append(
+            f"ctx:{getattr(team, 'coach_name', '')}:"
+            f"{getattr(team, 'three_par', 0.0):.3f}:"
+            f"{getattr(team, 'frontcourt_height_in', 0.0):.2f}"
+        )
         for p in sorted(team.players, key=lambda x: x.player_id):
             parts.append(
                 f"{p.player_id}:{p.min:.3f}:{p.pts:.3f}:{p.fga:.3f}:"
                 f"{p.fg_pct:.4f}:{p.fg3_pct:.4f}:{p.fta:.3f}:{p.ft_pct:.4f}:"
-                f"{p.tov:.3f}:{p.reb:.3f}:{p.ast:.3f}:{p.gp}"
+                f"{p.tov:.3f}:{p.reb:.3f}:{p.ast:.3f}:{p.gp}:"
+                f"{getattr(p, 'height_in', 0.0):.1f}:"
+                f"{getattr(p, 'usg_pct', 0.0):.2f}:"
+                f"{getattr(p, 'ts_pct', 0.0):.3f}"
             )
     digest = hashlib.sha256("|".join(parts).encode()).hexdigest()
     return digest[:12]
@@ -218,7 +226,24 @@ def _rotation(team: TeamSeason) -> list[PlayerSeason]:
     return rot
 
 
-def _build_context(team: TeamSeason, opp_def: float, league_def: float = 112.0) -> _TeamContext:
+def _build_context(
+    team: TeamSeason,
+    opp_def: float,
+    league_def: float = 112.0,
+    *,
+    opp_team: TeamSeason | None = None,
+) -> _TeamContext:
+    from nba_sim.contextfeats import (
+        coach_three_multiplier,
+        coach_tov_pressure_multiplier,
+        derive_coach_style,
+        frontcourt_height,
+        size_fg2_multiplier,
+        size_oreb_delta,
+        team_three_par,
+        ts_shot_multiplier,
+    )
+
     rot = _rotation(team)
     lines = [
         PlayerGameLine(player_id=p.player_id, name=p.name, min=0.0) for p in rot
@@ -235,10 +260,22 @@ def _build_context(team: TeamSeason, opp_def: float, league_def: float = 112.0) 
     min_shares = _safe_norm(mins)
     alloc_min = min_shares * TEAM_MINUTES_TARGET
 
-    # Usage ∝ FGA weighted by minutes. Mild power concentration keeps stars
-    # from being flattened by a crowd of mid-usage bench/rookies.
+    # Usage ∝ FGA·√min, blended with USG% when advanced rates exist.
     fga = np.array([max(p.fga, 0.05) for p in rot], dtype=float)
-    raw_usage = fga * np.sqrt(mins)
+    usg = np.array(
+        [
+            (p.usg_pct / 100.0) if getattr(p, "usg_pct", 0.0) and p.usg_pct > 1.0
+            else (p.usg_pct if getattr(p, "usg_pct", 0.0) > 0 else 0.0)
+            for p in rot
+        ],
+        dtype=float,
+    )
+    raw_fga = fga * np.sqrt(mins)
+    if float(usg.max()) > 0:
+        raw_usg = np.maximum(usg, 0.05) * mins
+        raw_usage = 0.55 * raw_fga + 0.45 * raw_usg
+    else:
+        raw_usage = raw_fga
     # Archetype-only rookies: further trim shot share even if they made rotation.
     arch_mult = np.array(
         [0.55 if getattr(p, "archetype_only", False) else 1.0 for p in rot],
@@ -262,20 +299,54 @@ def _build_context(team: TeamSeason, opp_def: float, league_def: float = 112.0) 
     fatigue = float(getattr(team, "fatigue_fg_mult", 1.0) or 1.0)
     shot_adj = def_adj * _clip(fatigue, 0.95, 1.0)
 
+    # --- Matchup context: size + coaching style (mild, clipped) ---
+    own_fc = float(
+        getattr(team, "frontcourt_height_in", 0.0) or frontcourt_height(rot)
+    )
+    opp_fc = (
+        float(getattr(opp_team, "frontcourt_height_in", 0.0) or frontcourt_height(opp_team.players))
+        if opp_team is not None
+        else own_fc
+    )
+    fg2_size = size_fg2_multiplier(own_fc, opp_fc)
+    oreb_size = size_oreb_delta(own_fc, opp_fc)
+
+    three_par = float(getattr(team, "three_par", 0.0) or team_three_par(team.players))
+    own_style = derive_coach_style(
+        coach_name=getattr(team, "coach_name", "") or "",
+        pace=float(team.pace),
+        def_rating=float(team.def_rating),
+        three_par=three_par,
+    )
+    three_mult = coach_three_multiplier(own_style.three_tilt)
+    opp_tov_mult = 1.0
+    if opp_team is not None:
+        opp_style = derive_coach_style(
+            coach_name=getattr(opp_team, "coach_name", "") or "",
+            pace=float(opp_team.pace),
+            def_rating=float(opp_team.def_rating),
+            three_par=float(
+                getattr(opp_team, "three_par", 0.0) or team_three_par(opp_team.players)
+            ),
+        )
+        opp_tov_mult = coach_tov_pressure_multiplier(opp_style.defense_tilt)
+
     fg2, fg3, three_rate, ft = [], [], [], []
     tov_num = tov_den = 0.0
     oreb_num = oreb_den = 0.0
     for p in rot:
         fga_p = max(p.fga, 0.05)
         fg3a = max(min(p.fg3a, fga_p), 0.0)
-        tr = _clip(fg3a / fga_p, 0.05, 0.70)
+        tr = _clip(fg3a / fga_p, 0.05, 0.70) * three_mult
+        tr = _clip(tr, 0.05, 0.70)
         # Approximate 2P% from overall FG and 3P mix
         g = _clip(p.fg_pct if p.fg_pct > 0 else 0.45, FG_FLOOR, FG_CEIL)
         g3 = _clip(p.fg3_pct if p.fg3_pct > 0 else 0.35, FG3_FLOOR, FG3_CEIL)
         # Solve rough: FG ≈ (1-tr)*fg2 + tr*g3  → fg2
         fg2_p = (g - tr * g3) / max(1.0 - tr, 0.15)
-        fg2_p = _clip(fg2_p * shot_adj, FG_FLOOR, FG_CEIL)
-        g3 = _clip(g3 * shot_adj, FG3_FLOOR, FG3_CEIL)
+        ts_mult = ts_shot_multiplier(float(getattr(p, "ts_pct", 0.0) or 0.0))
+        fg2_p = _clip(fg2_p * shot_adj * fg2_size * ts_mult, FG_FLOOR, FG_CEIL)
+        g3 = _clip(g3 * shot_adj * ts_mult, FG3_FLOOR, FG3_CEIL)
         fg2.append(fg2_p)
         fg3.append(g3)
         three_rate.append(tr)
@@ -288,8 +359,13 @@ def _build_context(team: TeamSeason, opp_def: float, league_def: float = 112.0) 
 
     # Team turnover rate per possession ≈ TOV / (FGA + TOV + 0.44*FTA),
     # weighted — NOT multiplied by pace again later.
-    tov_rate = _clip(tov_num / max(tov_den, 1e-6), TOV_RATE_FLOOR, TOV_RATE_CEIL)
+    tov_rate = _clip(
+        (tov_num / max(tov_den, 1e-6)) * opp_tov_mult,
+        TOV_RATE_FLOOR,
+        TOV_RATE_CEIL,
+    )
     oreb_rate = _clip(oreb_num / max(oreb_den, 1e-6), 0.18, 0.35) if oreb_den else OREB_RATE_DEFAULT
+    oreb_rate = _clip(oreb_rate + oreb_size, 0.16, 0.38)
 
     return _TeamContext(
         abbr=team.abbreviation,
@@ -463,8 +539,12 @@ def _simulate_with_contexts(
 
 
 def simulate_game(matchup: MatchupData, rng: np.random.Generator) -> GameResult:
-    home = _build_context(matchup.home, opp_def=matchup.away.def_rating)
-    away = _build_context(matchup.away, opp_def=matchup.home.def_rating)
+    home = _build_context(
+        matchup.home, opp_def=matchup.away.def_rating, opp_team=matchup.away
+    )
+    away = _build_context(
+        matchup.away, opp_def=matchup.home.def_rating, opp_team=matchup.home
+    )
     return _simulate_with_contexts(home, away, rng)
 
 
@@ -521,8 +601,12 @@ def run_simulations(
     if home_fg_boost is not None:
         HOME_FG_BOOST = float(home_fg_boost)
     try:
-        home_ctx = _build_context(matchup.home, opp_def=matchup.away.def_rating)
-        away_ctx = _build_context(matchup.away, opp_def=matchup.home.def_rating)
+        home_ctx = _build_context(
+            matchup.home, opp_def=matchup.away.def_rating, opp_team=matchup.away
+        )
+        away_ctx = _build_context(
+            matchup.away, opp_def=matchup.home.def_rating, opp_team=matchup.home
+        )
         results: list[GameResult] = []
         for _ in range(n):
             results.append(_simulate_with_contexts(home_ctx, away_ctx, rng))
@@ -632,6 +716,11 @@ def _audit_batch(results: Sequence[GameResult], matchup: MatchupData) -> dict:
         "pace_mechanism": "single game pace = avg(team paces); player rates are shares",
         "drtg_mechanism": "FG/3P × clip(opp_DRtg/league, 0.94, 1.06); higher DRtg (worse D) boosts offense",
         "ortg_mechanism": "team ORtg not re-applied to FG (already in player rates; avoids double-count)",
+        "matchup_context": (
+            "heights (frontcourt size → 2P/OREB), USG%/TS% blend, "
+            "coach style from pace/3PAR/DRtg (three tilt + TOV pressure)"
+        ),
         "tie_break": f"up to {MAX_OT_PERIODS} OT periods ({OT_POSSESSIONS} poss/side); then +1 coin-flip",
         "data_note": f"priors from matchup source={matchup.source} season={matchup.season}",
+        "matchup_notes": list(getattr(matchup, "matchup_notes", None) or []),
     }
