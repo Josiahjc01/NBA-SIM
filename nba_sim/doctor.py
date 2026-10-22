@@ -417,7 +417,7 @@ def run_doctor(
             "Live sims will error until stats.nba.com is reachable."
         )
         print_lines.append(
-            "Tips: export NBA_SIM_TIMEOUT=120 NBA_SIM_RETRIES=6; "
+            "Tips: export NBA_SIM_TIMEOUT=60 NBA_SIM_RETRIES=4; "
             "delete .cache/ if stale; retry off VPN; "
             "`python -m nba_sim --home BOS --away NYK --n 5000` pulls all feeds "
             "(any of 30 teams)."

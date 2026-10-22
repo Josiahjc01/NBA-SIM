@@ -53,16 +53,20 @@ Required feeds (player/team stats, roster, scoreboard) must pass. Optional feeds
 
 | Env | Default | Meaning |
 |-----|---------|---------|
-| `NBA_SIM_TIMEOUT` | `90` | Seconds per NBA Stats request |
-| `NBA_SIM_RETRIES` | `5` | Hard retries for required feeds |
+| `NBA_SIM_TIMEOUT` | `30` | Seconds per NBA Stats request |
+| `NBA_SIM_RETRIES` | `3` | Hard retries for required feeds |
 | `NBA_SIM_PAUSE` | `0.55` | Pause (+jitter) before each live call |
 | `NBA_SIM_CACHE_TTL` | `21600` | Endpoint cache TTL (seconds) |
 | `NBA_SIM_MAX_WORKERS` | `4` | Parallel independent fetches |
+| `ODDS_API_KEY` / `THE_ODDS_API_KEY` | _(unset)_ | The Odds API key for ML / spread / total prices + player props (optional; ESPN scoreboard still used) |
 
 ```bash
-export NBA_SIM_TIMEOUT=120 NBA_SIM_RETRIES=6
+export NBA_SIM_TIMEOUT=60 NBA_SIM_RETRIES=4
+export ODDS_API_KEY=your_key   # optional; THE_ODDS_API_KEY also accepted
 python -m nba_sim --home BOS --away NYK --n 5000 --no-cache   # force fresh
 ```
+
+**`--date` / future tips:** LeagueDash `DateTo` is clamped to Eastern **yesterday** (never “today”/future — those hang on stats.nba.com). BoxScoreSummary inactives/officials only run when tip is today or within ~6h.
 
 Caches: `.cache/` (matchup aggregates) + `.cache/endpoints/` (per-endpoint JSON). Safe to delete.
 
@@ -100,20 +104,23 @@ Oriented for tip-off / early **2026-27**:
 - Report prints blend weights (reg/last/pre/rookie) and rookie notes.
 - Disable the whole blend stack with `--no-fallback` (current regular only).
 
-### Injuries & betting lines (v0.6)
+### Injuries & betting lines
 
 ```bash
-# Multi-source ESPN injuries (default ON live): site + core + team + scoreboard
+# Multi-source ESPN injuries (default ON live): site + team + scoreboard
+# (ESPN core injuries URL 404s permanently — not probed)
 python -m nba_sim --home BOS --away NYK --n 5000
 
 # Or CSV: name,team,status[,mult]
 python -m nba_sim --home BOS --away NYK --injuries-csv injuries.csv --n 5000
 
-# Lines: CLI wins; else auto ESPN scoreboard closing odds; else --lines-csv
+# Lines: CLI wins; else live ESPN + optional The Odds API; else --lines-csv
 python -m nba_sim --home BOS --away NYK --spread -3.5 --total 224.5 --n 5000
 python -m nba_sim --home BOS --away NYK --n 5000                  # live odds if available
 python -m nba_sim --home BOS --away NYK --no-live-lines --n 5000  # skip auto odds
 ```
+
+**Top 5 wagers** (report footer): edges vs **de-vigged** market implied probs when ML/spread/total/prop prices exist. No line → lean labeled **no market** (no fake 50%/224.5 edge %). Always up to 5 items when enough candidates exist.
 
 ### v0.6 accuracy levers (default on for live)
 
@@ -125,7 +132,7 @@ python -m nba_sim --home BOS --away NYK --no-live-lines --n 5000  # skip auto od
 | True SoS | Team NET × recent slate | Opponent-adjusted ORtg/DRtg |
 | Clutch | `LeagueDashPlayerClutch` | ±3% FG if FGA≥15 after shrink; else skip |
 | IST / Playoffs | Tip date or `--season-type` | Pace / foul / star-minute regime |
-| Closing lines | ESPN scoreboard odds | Cover%/over% + light pace calibration |
+| Closing lines | ESPN scoreboard + optional Odds API | Cover%/over% + de-vig Top 5 edges + light pace calibration |
 
 Use `--no-enrich` to skip last-N / PtDefend / lineups / SoS / clutch / on-off / starters / garbage.
 

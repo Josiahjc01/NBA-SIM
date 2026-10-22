@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.2
+Live-run hotfix (Blazers @ Kings / `--date` path):
+
+1. **Top 5 wagers** — real market prices (ESPN scoreboard ML/spread/total + optional **The Odds API** via `ODDS_API_KEY` / `THE_ODDS_API_KEY`); edges vs **de-vigged** implied probs; **no market** label when unpriced (no 50%/224.5 fakes); pad to 5 when ≥5 candidates.
+2. **`--date` hang** — clamp LeagueDash `DateTo` to Eastern yesterday (never today/future); skip BoxScoreSummary inactives/officials until tip day / ~6h; default `NBA_SIM_TIMEOUT=30`, `NBA_SIM_RETRIES=3` (env override).
+3. **ESPN core injuries** — drop dead `sports.core.api.espn.com/.../injuries` probe (permanent 404).
+
 ## 1.0.1
 CI hygiene: install `pytest` in GitHub Actions and run `pytest tests/` (unittest discover could not import modules that use `pytest.approx`). No model changes. Tag line with green CI after 1.0.0.
 
