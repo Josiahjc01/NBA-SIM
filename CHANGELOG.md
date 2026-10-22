@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.0.1
+CI hygiene: install `pytest` in GitHub Actions and run `pytest tests/` (unittest discover could not import modules that use `pytest.approx`). No model changes. Tag line with green CI after 1.0.0.
+
 ## 1.0.0
 Firm v1.0 release on top of 0.7.0. Cache schema remains **`blendv10`**.
 

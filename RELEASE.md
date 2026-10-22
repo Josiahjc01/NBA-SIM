@@ -1,3 +1,7 @@
+# NBA-SIM 1.0.1
+
+Patch on firm 1.0.0: green CI (`pytest` in Actions). Tag: `v1.0.1` (preferred). Prior tag `v1.0.0` remains at the feature freeze SHA.
+
 # NBA-SIM 1.0.0
 
 Firm first major release. Tag: `v1.0.0`.
