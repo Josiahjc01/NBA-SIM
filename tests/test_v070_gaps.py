@@ -5,8 +5,6 @@ from __future__ import annotations
 from datetime import date
 from types import SimpleNamespace
 
-import pytest
-
 from nba_sim.calibrate import (
     CALIBRATED_HOME_FG_BOOST,
     market_calibration_report,
