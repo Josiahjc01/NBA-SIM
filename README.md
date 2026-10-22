@@ -26,7 +26,7 @@ python -m nba_sim --home BOS --away NYK --n 5000
 python -m nba_sim --home Nuggets --away "Minnesota Timberwolves" --n 5000
 python -m nba_sim --home GSW --away LAL --n 5000
 
-# Tip date → season + season_type (Playoffs ≈ Apr 15–Jun 30); priors through day before tip
+# Tip date → season + season_type (Play-In ≈ Apr 11–18; Playoffs ≈ Apr 19–Jun 30); priors through day before tip
 python -m nba_sim --home OKC --away DEN --date 2027-05-12 --n 5000
 python -m nba_sim --home OKC --away DEN --date 2027-05-12 --season-type Playoffs --n 5000
 

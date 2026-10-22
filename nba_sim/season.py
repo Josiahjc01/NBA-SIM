@@ -4,9 +4,9 @@ Default target season for this project: 2026-27 (live season-to-date).
 
 Season type (stats boards):
   - Regular Season (default / most of the year)
-  - PlayIn — tip dates in the Play-In window (≈ Apr 11–14; year-aware)
-  - Playoffs when tip date falls in the typical postseason window
-    (Play-In end → June). Override with --season-type if needed.
+  - PlayIn — tip dates in the Play-In window (≈ Apr 11–18; year-aware)
+  - Playoffs when tip date falls after Play-In (≈ Apr 19 → June).
+    Override with --season-type if needed.
 
 Game mode (regime layer — see `regime.py`):
   - Regular Season | PlayIn | Playoffs | IST / NBA Cup
@@ -53,14 +53,14 @@ def play_in_window(d: date | None) -> tuple[date, date] | None:
     """
     Approximate Play-In Tournament window for the tip calendar year.
 
-    NBA Play-In is typically the Tuesday–Friday before the playoffs start
-    (second full week of April). We use Apr 11–14 as the core window;
-    Apr 15+ is treated as Playoffs (first round can start ~Apr 19).
+    NBA Play-In is typically Tue–Fri before first-round tips (~Apr 19).
+    Use Apr 11–18 inclusive so Apr 15–18 are not mislabeled Playoffs
+    (audit High H3). Override with `--season-type` when the calendar is known.
     """
     if d is None:
         return None
     y = d.year
-    return date(y, 4, 11), date(y, 4, 14)
+    return date(y, 4, 11), date(y, 4, 18)
 
 
 def is_play_in_window(d: date | None) -> bool:
@@ -74,14 +74,14 @@ def season_type_from_date(d: date | None) -> str:
     """
     Heuristic season_type for NBA Stats dashboards.
 
-    Priority: PlayIn (Apr 11–14) → Playoffs (Apr 15–Jun 30) → Regular Season.
+    Priority: PlayIn (Apr 11–18) → Playoffs (Apr 19–Jun 30) → Regular Season.
     IST tips still use Regular Season boards (Cup games are RS-counted).
     """
     if d is None:
         return "Regular Season"
     if is_play_in_window(d):
         return "PlayIn"
-    if d.month == 4 and d.day >= 15:
+    if d.month == 4 and d.day >= 19:
         return "Playoffs"
     if d.month in (5, 6):
         return "Playoffs"
