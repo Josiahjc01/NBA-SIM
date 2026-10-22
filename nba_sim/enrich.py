@@ -54,7 +54,7 @@ def fetch_last_n_player_stats(
                 "season_type_all_star": season_type,
             }
         )
-        if date_to and season_type in ("Regular Season", "Playoffs"):
+        if date_to and season_type in ("Regular Season", "Playoffs", "PlayIn"):
             kwargs["date_to_nullable"] = date_to
         ep = leaguedashplayerstats.LeagueDashPlayerStats(**kwargs)
         return ep.get_normalized_dict().get("LeagueDashPlayerStats") or []
@@ -88,7 +88,7 @@ def fetch_player_pt_defend(
                 "season_type_all_star": season_type,
             }
         )
-        if date_to and season_type in ("Regular Season", "Playoffs"):
+        if date_to and season_type in ("Regular Season", "Playoffs", "PlayIn"):
             kwargs["date_to_nullable"] = date_to
         ep = leaguedashptdefend.LeagueDashPtDefend(**kwargs)
         data = ep.get_normalized_dict()
@@ -127,7 +127,7 @@ def fetch_team_lineups(
                 "season_type_all_star": season_type,
             }
         )
-        if date_to and season_type in ("Regular Season", "Playoffs"):
+        if date_to and season_type in ("Regular Season", "Playoffs", "PlayIn"):
             kwargs["date_to_nullable"] = date_to
         ep = leaguedashlineups.LeagueDashLineups(**kwargs)
         data = ep.get_normalized_dict()
@@ -167,7 +167,7 @@ def fetch_player_clutch(
                 "point_diff": 5,
             }
         )
-        if date_to and season_type in ("Regular Season", "Playoffs"):
+        if date_to and season_type in ("Regular Season", "Playoffs", "PlayIn"):
             kwargs["date_to_nullable"] = date_to
         ep = leaguedashplayerclutch.LeagueDashPlayerClutch(**kwargs)
         data = ep.get_normalized_dict()
@@ -204,7 +204,7 @@ def fetch_team_net_map(
                 "season_type_all_star": season_type,
             }
         )
-        if date_to and season_type in ("Regular Season", "Playoffs"):
+        if date_to and season_type in ("Regular Season", "Playoffs", "PlayIn"):
             kwargs["date_to_nullable"] = date_to
         ep = leaguedashteamstats.LeagueDashTeamStats(**kwargs)
         return ep.get_normalized_dict().get("LeagueDashTeamStats") or []
@@ -497,6 +497,129 @@ def apply_lineup_net_to_ratings(matchup: Any) -> list[str]:
     return notes
 
 
+def fetch_team_onoff(
+    team_id: int,
+    season: str,
+    date_to: str | None,
+    *,
+    season_type: str = "Regular Season",
+    use_cache: bool = True,
+) -> dict[str, list[dict[str, Any]]]:
+    from nba_api.stats.endpoints import teamplayeronoffsummary
+
+    label = f"TeamPlayerOnOffSummary({team_id},{season})"
+    cache_key = (
+        f"ep_onoff_{team_id}_{season}_{season_type.replace(' ','')}_"
+        f"{date_to or 'latest'}"
+    )
+
+    def call():
+        kwargs: dict[str, Any] = endpoint_kwargs(
+            {
+                "team_id": int(team_id),
+                "season": season,
+                "season_type_all_star": season_type,
+                "measure_type_detailed_defense": "Advanced",
+                "per_mode_detailed": "PerGame",
+            }
+        )
+        if date_to and season_type in ("Regular Season", "Playoffs", "PlayIn"):
+            kwargs["date_to_nullable"] = date_to
+        ep = teamplayeronoffsummary.TeamPlayerOnOffSummary(**kwargs)
+        return ep.get_normalized_dict()
+
+    data = with_retries(label, call, use_cache=use_cache, cache_key=cache_key)
+    return {
+        "on": data.get("PlayersOnCourtTeamPlayerOnOffSummary") or [],
+        "off": data.get("PlayersOffCourtTeamPlayerOnOffSummary") or [],
+    }
+
+
+def apply_onoff_nets(
+    matchup: Any,
+    home_oo: dict[str, list] | None,
+    away_oo: dict[str, list] | None,
+) -> list[str]:
+    """
+    Attach per-player on-court NET and nudge top on/off vs team.
+
+    Thin MIN samples skipped. Complements lineup NET + player PtDefend.
+    """
+    notes: list[str] = []
+
+    def _apply(side: Any, oo: dict[str, list] | None, label: str) -> None:
+        if not oo:
+            notes.append(f"on/off {label}: unavailable")
+            return
+        on_rows = {int(r.get("PLAYER_ID") or 0): r for r in (oo.get("on") or []) if r.get("PLAYER_ID")}
+        n = 0
+        net_sum = w_sum = 0.0
+        for p in side.players:
+            row = on_rows.get(int(p.player_id))
+            if not row:
+                continue
+            mins = _f(row, "MIN", "MINUTES")
+            if mins < 50:
+                continue
+            net = _f(row, "NET_RATING", "PLUS_MINUS")
+            p.on_net = net
+            net_sum += net * mins
+            w_sum += mins
+            n += 1
+        if w_sum > 0 and n >= 3:
+            mean_on = net_sum / w_sum
+            # Mild team ORtg nudge from rotation on-court quality
+            adj = max(-1.0, min(1.0, 0.08 * mean_on))
+            side.off_rating = float(side.off_rating) + adj
+            side.onoff_net = mean_on
+            notes.append(
+                f"on/off {label}: {n} players, mean on-NET={mean_on:+.1f} "
+                f"→ ORtg{adj:+.2f}"
+            )
+        else:
+            notes.append(f"on/off {label}: thin sample — skipped")
+
+    _apply(matchup.home, home_oo, matchup.home.abbreviation)
+    _apply(matchup.away, away_oo, matchup.away.abbreviation)
+    return notes
+
+
+def apply_projected_starters(matchup: Any) -> list[str]:
+    """
+    Mark top-5 by evidence/last-N minutes as projected starters.
+
+    Starters get mild minute boost; non-starters in rotation get slight cut.
+    Complements last-N blend (does not replace it).
+    """
+    notes: list[str] = []
+    STARTER_BOOST = 1.06
+    BENCH_CUT = 0.96
+    for side in (matchup.home, matchup.away):
+        ranked = sorted(
+            [p for p in side.players if float(p.min or 0) > 0],
+            key=lambda p: (
+                float(getattr(p, "lastn_min", 0.0) or 0.0),
+                float(getattr(p, "evidence_min", 0.0) or p.min or 0.0),
+            ),
+            reverse=True,
+        )
+        names: list[str] = []
+        for i, p in enumerate(ranked):
+            if i < 5:
+                p.projected_starter = True
+                p.min = float(p.min) * STARTER_BOOST
+                names.append(p.name.split()[-1])
+            else:
+                p.projected_starter = False
+                if i < 10:
+                    p.min = float(p.min) * BENCH_CUT
+        notes.append(
+            f"starters {side.abbreviation}: projected "
+            f"{', '.join(names[:5]) or 'n/a'} (min×{STARTER_BOOST:.2f})"
+        )
+    return notes
+
+
 def enrich_matchup(
     matchup: Any,
     *,
@@ -516,8 +639,12 @@ def enrich_matchup(
         matchup.enrichment_notes = notes
         return notes
 
-    # Playoffs season_type for enrichment; IST still uses Regular Season boards
-    st = season_type if season_type in ("Regular Season", "Playoffs") else "Regular Season"
+    # Playoffs/PlayIn boards; IST still uses Regular Season boards
+    st = (
+        season_type
+        if season_type in ("Regular Season", "Playoffs", "PlayIn")
+        else "Regular Season"
+    )
 
     jobs = [
         (
@@ -588,6 +715,36 @@ def enrich_matchup(
                 use_cache=False,
             ),
         ),
+        (
+            "onoff_h",
+            lambda: soft_fetch(
+                "on/off home",
+                lambda: fetch_team_onoff(
+                    int(matchup.home.team_id),
+                    season,
+                    date_to,
+                    season_type=st,
+                    use_cache=use_cache,
+                ),
+                retries=2,
+                use_cache=False,
+            ),
+        ),
+        (
+            "onoff_a",
+            lambda: soft_fetch(
+                "on/off away",
+                lambda: fetch_team_onoff(
+                    int(matchup.away.team_id),
+                    season,
+                    date_to,
+                    season_type=st,
+                    use_cache=use_cache,
+                ),
+                retries=2,
+                use_cache=False,
+            ),
+        ),
     ]
     results = parallel_map(jobs)
 
@@ -631,6 +788,20 @@ def enrich_matchup(
     if cl_err:
         notes.append(f"clutch: FAILED — {cl_err}")
     notes.extend(apply_clutch_splits(matchup, cl))
+
+    from nba_sim.garbage import apply_garbage_time_filter
+
+    notes.extend(apply_garbage_time_filter(matchup, cl))
+
+    oo_h, oo_h_err = val("onoff_h")
+    oo_a, oo_a_err = val("onoff_a")
+    if oo_h_err:
+        notes.append(f"on/off home: FAILED — {oo_h_err}")
+    if oo_a_err:
+        notes.append(f"on/off away: FAILED — {oo_a_err}")
+    notes.extend(apply_onoff_nets(matchup, oo_h, oo_a))
+
+    notes.extend(apply_projected_starters(matchup))
 
     matchup.enrichment_notes = list(notes)
     return notes

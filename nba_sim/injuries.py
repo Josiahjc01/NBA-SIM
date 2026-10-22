@@ -24,6 +24,7 @@ import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any, Iterable
 
 from nba_sim.data import MatchupData, PlayerSeason, TeamSeason
@@ -505,11 +506,13 @@ def apply_injuries(
     entries: list[InjuryEntry] | None = None,
     live: bool = False,
     csv_path: str | None = None,
+    game_date: date | str | None = None,
+    use_cache: bool = True,
 ) -> MatchupData:
     """
-    Mutate matchup player minutes from injury list.
+    Mutate matchup player minutes from injury / inactive list.
 
-    Priority: csv_path entries, else live multi-source if live=True, else no-op.
+    Priority: csv_path, else live multi-source (ESPN + NBA pre-tip InactivePlayers).
     """
     notes: list[str] = []
     loaded: list[InjuryEntry] = list(entries or [])
@@ -525,21 +528,85 @@ def apply_injuries(
             loaded.extend(fetched.entries)
             ok = ", ".join(fetched.sources_ok) or "none"
             notes.append(
-                f"injuries multi-source OK: {ok} → {len(fetched.entries)} unique "
-                "(ESPN; not NBA.com official — CDN blocked / no tip-box inactive)"
+                f"injuries ESPN multi-source OK: {ok} → {len(fetched.entries)} unique"
             )
             for fail in fetched.sources_failed[:4]:
                 notes.append(f"injury source failed: {fail}")
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError, RuntimeError) as exc:
             notes.append(f"injury live fetch failed ({exc}); continuing without")
+
+        # NBA.com official-ish: pre-tip BoxScoreSummary InactivePlayers
+        tip: date | None
+        if isinstance(game_date, date):
+            tip = game_date
+        elif isinstance(game_date, str):
+            try:
+                tip = date.fromisoformat(game_date)
+            except ValueError:
+                tip = None
+        else:
+            tip = None
+        if tip is None and matchup.game_date:
+            try:
+                tip = date.fromisoformat(str(matchup.game_date))
+            except ValueError:
+                tip = None
+        if tip is not None:
+            try:
+                from nba_sim.nba_official import (
+                    fetch_pre_tip_game_context,
+                    inactives_as_injury_entries,
+                )
+
+                ctx = fetch_pre_tip_game_context(
+                    tip,
+                    home_team_id=int(matchup.home.team_id),
+                    away_team_id=int(matchup.away.team_id),
+                    use_cache=use_cache,
+                )
+                notes.extend(ctx.notes)
+                if ctx.inactives:
+                    nba_rows = inactives_as_injury_entries(ctx.inactives)
+                    loaded.extend(nba_rows)
+                    notes.append(
+                        f"injuries NBA InactivePlayers merged ({len(nba_rows)} rows)"
+                    )
+                matchup._pre_tip_officials = ctx.officials  # type: ignore[attr-defined]
+            except Exception as exc:  # noqa: BLE001
+                notes.append(f"nba-inactive fetch failed ({exc})")
+        else:
+            notes.append(
+                "nba-inactive: no tip date — skipped "
+                "(pass --date / slate date for BoxScoreSummary inactive)"
+            )
     if not loaded:
         matchup.injury_notes = notes
         return matchup
     if entries and not csv_path and not live:
         notes.append(f"injuries from in-memory entries ({len(entries)} rows)")
 
+    # Prefer player_id match for NBA inactive rows
     notes.extend(apply_injuries_to_team(matchup.home, loaded))
     notes.extend(apply_injuries_to_team(matchup.away, loaded))
+    # Also zero by player_id from detail=player_id=N
+    for side in (matchup.home, matchup.away):
+        for e in loaded:
+            if e.source != "nba-inactive" or "player_id=" not in (e.detail or ""):
+                continue
+            try:
+                pid = int((e.detail or "").split("player_id=")[-1])
+            except ValueError:
+                continue
+            for p in side.players:
+                if int(p.player_id) == pid and float(p.min or 0) > 0:
+                    before = p.min
+                    p.min = 0.0
+                    p.injury_mult = 0.0
+                    p.injury_status = "Inactive"
+                    notes.append(
+                        f"{side.abbreviation} {p.name}: Inactive "
+                        f"min {before:.1f}→0 [nba-inactive id]"
+                    )
     matchup.injuries_applied = True
     matchup.injury_notes = notes
     return matchup

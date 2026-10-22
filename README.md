@@ -47,7 +47,7 @@ python -m nba_sim --check-data          # same
 python -m nba_sim doctor --json         # machine-readable
 ```
 
-Required feeds (player/team stats, roster, scoreboard) must pass. Optional feeds (hustle, team/player PtDefend, Four Factors, shot locations, last-N, lineups, clutch, ESPN injuries/odds) warn and degrade gracefully with loud provenance. After upgrades use `--no-cache` once (schema **`blendv9`**).
+Required feeds (player/team stats, roster, scoreboard) must pass. Optional feeds (hustle, PtDefend, Four Factors, shot zones, last-N, lineups, clutch, on/off, ESPN injuries/odds, NBA CDN) warn and degrade gracefully. After upgrades use `--no-cache` once (schema **`blendv10`**). Text reports end with a **Top 5 wagers** section.
 
 ### Live fetch env tips (`stats.nba.com`)
 
@@ -127,7 +127,12 @@ python -m nba_sim --home BOS --away NYK --no-live-lines --n 5000  # skip auto od
 | IST / Playoffs | Tip date or `--season-type` | Pace / foul / star-minute regime |
 | Closing lines | ESPN scoreboard odds | Cover%/over% + light pace calibration |
 
-Use `--no-enrich` to skip last-N / PtDefend / lineups / SoS / clutch.
+Use `--no-enrich` to skip last-N / PtDefend / lineups / SoS / clutch / on-off / starters / garbage.
+
+```bash
+python -m nba_sim calibrate          # post-tip settled home-win / total study (tuning only)
+python -m nba_sim --home BOS --away NYK --date 2027-04-12 --n 2000   # Play-In
+```
 
 ### Arguments
 

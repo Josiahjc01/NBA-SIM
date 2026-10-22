@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import Any
 
 from nba_sim.data import MatchupData
@@ -12,6 +13,187 @@ from nba_sim.model import SimSummary
 
 def _pct(x: float) -> str:
     return f"{100.0 * x:.1f}%"
+
+
+@dataclass
+class WagerPick:
+    """One ranked betting angle from sim (no invented book prices)."""
+
+    market: str  # ml | spread | total | player_pts
+    selection: str
+    lean_pct: float  # 0–1 sim probability or proxy
+    edge_pp: float  # vs 50% (or vs market when known)
+    detail: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "market": self.market,
+            "selection": self.selection,
+            "lean_pct": self.lean_pct,
+            "edge_pp": self.edge_pp,
+            "detail": self.detail,
+        }
+
+
+def build_top_wagers(summary: SimSummary, *, n: int = 5) -> list[WagerPick]:
+    """
+    Rank ML / spread / total / player-pts leans from sim output.
+
+    Uses market spread/total when present on `summary.line_probs` for cover/over
+    leans. Does **not** invent odds or alternate books — player rows are sim
+    mean PTS leaders (informational leans).
+    """
+    cands: list[WagerPick] = []
+
+    # Moneyline
+    if summary.home_win_pct >= summary.away_win_pct:
+        lean = float(summary.home_win_pct)
+        sel = f"{summary.home_abbr} ML"
+    else:
+        lean = float(summary.away_win_pct)
+        sel = f"{summary.away_abbr} ML"
+    cands.append(
+        WagerPick(
+            market="ml",
+            selection=sel,
+            lean_pct=lean,
+            edge_pp=100.0 * (lean - 0.5),
+            detail="sim win%",
+        )
+    )
+
+    lp = summary.line_probs
+    if lp is not None and lp.spread is not None and lp.home_cover_pct is not None:
+        hc = float(lp.home_cover_pct)
+        ac = float(lp.away_cover_pct or (1.0 - hc - float(lp.spread_push_pct or 0)))
+        if hc >= ac:
+            cands.append(
+                WagerPick(
+                    market="spread",
+                    selection=f"{summary.home_abbr} {lp.spread:+.1f}",
+                    lean_pct=hc,
+                    edge_pp=100.0 * (hc - 0.5),
+                    detail="sim cover% vs market spread",
+                )
+            )
+        else:
+            # Away cover = taking the other side of home line
+            away_line = -float(lp.spread)
+            cands.append(
+                WagerPick(
+                    market="spread",
+                    selection=f"{summary.away_abbr} {away_line:+.1f}",
+                    lean_pct=ac,
+                    edge_pp=100.0 * (ac - 0.5),
+                    detail="sim cover% vs market spread",
+                )
+            )
+
+    if lp is not None and lp.total is not None and lp.over_pct is not None:
+        ov = float(lp.over_pct)
+        un = float(lp.under_pct or (1.0 - ov - float(lp.total_push_pct or 0)))
+        if ov >= un:
+            cands.append(
+                WagerPick(
+                    market="total",
+                    selection=f"OVER {lp.total:.1f}",
+                    lean_pct=ov,
+                    edge_pp=100.0 * (ov - 0.5),
+                    detail=f"sim mean total {summary.mean_total:.1f}",
+                )
+            )
+        else:
+            cands.append(
+                WagerPick(
+                    market="total",
+                    selection=f"UNDER {lp.total:.1f}",
+                    lean_pct=un,
+                    edge_pp=100.0 * (un - 0.5),
+                    detail=f"sim mean total {summary.mean_total:.1f}",
+                )
+            )
+    else:
+        # No market total — still surface total lean vs league-ish 224.5 midpoint
+        mid = 224.5
+        if summary.mean_total >= mid:
+            cands.append(
+                WagerPick(
+                    market="total",
+                    selection=f"OVER lean (~{summary.mean_total:.1f})",
+                    lean_pct=min(0.65, 0.50 + (summary.mean_total - mid) / 80.0),
+                    edge_pp=min(15.0, summary.mean_total - mid),
+                    detail="no market total — sim mean vs 224.5 ref",
+                )
+            )
+        else:
+            cands.append(
+                WagerPick(
+                    market="total",
+                    selection=f"UNDER lean (~{summary.mean_total:.1f})",
+                    lean_pct=min(0.65, 0.50 + (mid - summary.mean_total) / 80.0),
+                    edge_pp=min(15.0, mid - summary.mean_total),
+                    detail="no market total — sim mean vs 224.5 ref",
+                )
+            )
+
+    # Player points leaders (sim means; not priced props)
+    scorers: list[tuple[str, str, float]] = []
+    for p in summary.home_players or []:
+        scorers.append((summary.home_abbr, str(p.get("name") or "?"), float(p.get("pts") or 0)))
+    for p in summary.away_players or []:
+        scorers.append((summary.away_abbr, str(p.get("name") or "?"), float(p.get("pts") or 0)))
+    scorers.sort(key=lambda x: x[2], reverse=True)
+    for abbr, name, pts in scorers[:3]:
+        if pts < 12:
+            continue
+        # Proxy lean: chance to be top scorer / clear 20+ — informational
+        lean = min(0.72, 0.40 + pts / 80.0)
+        cands.append(
+            WagerPick(
+                market="player_pts",
+                selection=f"{abbr} {name} pts",
+                lean_pct=lean,
+                edge_pp=pts - 20.0,
+                detail=f"sim avg {pts:.1f} pts (unpriced)",
+            )
+        )
+
+    # Rank by |edge| then lean; keep one per market family preference then fill
+    cands.sort(key=lambda w: (abs(w.edge_pp), w.lean_pct), reverse=True)
+    # Prefer diversity: at most 2 player_pts in top 5
+    out: list[WagerPick] = []
+    n_player = 0
+    for w in cands:
+        if w.market == "player_pts":
+            if n_player >= 2:
+                continue
+            n_player += 1
+        out.append(w)
+        if len(out) >= n:
+            break
+    return out
+
+
+def format_top_wagers_block(summary: SimSummary, *, n: int = 5) -> list[str]:
+    """Lines for the bottom-of-report Top 5 wagers section."""
+    picks = build_top_wagers(summary, n=n)
+    lines: list[str] = []
+    lines.append("Top 5 wagers")
+    lines.append("-" * 64)
+    if not picks:
+        lines.append("  (none — insufficient sim summary)")
+        return lines
+    for i, w in enumerate(picks, 1):
+        lines.append(
+            f"  {i}. {w.selection:<32} lean {_pct(w.lean_pct):>6}  "
+            f"edge {w.edge_pp:+.1f}pp  [{w.market}]"
+        )
+        if w.detail:
+            lines.append(f"      {w.detail}")
+    lines.append(
+        "  (Sim leans only — no invented book odds; market spread/total used when provided.)"
+    )
+    return lines
 
 
 def format_report(
@@ -226,6 +408,10 @@ def format_report(
             )
             for iss in cal["issues"][:4]:
                 lines.append(f"  [{iss.get('severity')}] {iss.get('message')}")
+
+    # Always last section before footer (v1 release bar)
+    lines.append("")
+    lines.extend(format_top_wagers_block(summary, n=5))
     lines.append("=" * 64)
     return "\n".join(lines)
 
@@ -317,6 +503,7 @@ def summary_to_dict(summary: SimSummary, matchup: MatchupData) -> dict[str, Any]
             "over_pct": lp.over_pct,
             "under_pct": lp.under_pct,
         },
+        "top_wagers": [w.to_dict() for w in build_top_wagers(summary, n=5)],
         "team_notes": dict(matchup.provenance.team_notes)
         if matchup.provenance
         else {},
@@ -362,5 +549,36 @@ def format_slate_table(
         )
         if r.get("note"):
             lines.append(f"       {r['note']}")
+    # Slate-level top wagers: strongest home-win edges across games
+    edges = []
+    for r in rows:
+        if str(r.get("note", "")).startswith("FAILED"):
+            continue
+        hw = float(r.get("home_win") or 0)
+        aw = float(r.get("away_win") or 0)
+        if hw >= aw:
+            edges.append((abs(hw - 0.5), f"{r['home']} ML", hw, r))
+        else:
+            edges.append((abs(aw - 0.5), f"{r['away']} ML", aw, r))
+        if r.get("home_cover") is not None:
+            hc = float(r["home_cover"])
+            edges.append(
+                (abs(hc - 0.5), f"{r['home']} cover", hc, r)
+            )
+        if r.get("over") is not None:
+            ov = float(r["over"])
+            side = "OVER" if ov >= 0.5 else "UNDER"
+            lean = ov if ov >= 0.5 else 1.0 - ov
+            edges.append((abs(lean - 0.5), f"{side} {r['away']}@{r['home']}", lean, r))
+    edges.sort(key=lambda x: x[0], reverse=True)
+    lines.append("")
+    lines.append("Top 5 wagers (slate)")
+    lines.append("-" * 100)
+    for i, (_e, sel, lean, r) in enumerate(edges[:5], 1):
+        lines.append(
+            f"  {i}. {r['away']}@{r['home']}: {sel:<28} lean {100*lean:.1f}%"
+        )
+    if not edges:
+        lines.append("  (none)")
     lines.append("=" * 100)
     return "\n".join(lines)

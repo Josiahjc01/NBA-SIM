@@ -4,25 +4,21 @@ Default target season for this project: 2026-27 (live season-to-date).
 
 Season type (stats boards):
   - Regular Season (default / most of the year)
+  - PlayIn — tip dates in the Play-In window (≈ Apr 11–14; year-aware)
   - Playoffs when tip date falls in the typical postseason window
-    (approx mid-April through June). Play-In / exact calendars vary by year —
-    override with --season-type if needed.
+    (Play-In end → June). Override with --season-type if needed.
 
 Game mode (regime layer — see `regime.py`):
-  - Regular Season
-  - Playoffs (same window as season_type)
-  - IST / NBA Cup — approx Nov 21 – Dec 17 (group + knockout); boards stay
-    Regular Season because Cup games count in the regular-season dashboards.
+  - Regular Season | PlayIn | Playoffs | IST / NBA Cup
 """
 
 from __future__ import annotations
 
 from datetime import date, datetime
 
-# Canonical default when --date / --season are omitted.
 CURRENT_SEASON = "2026-27"
 
-SEASON_TYPES = ("Regular Season", "Playoffs", "Pre Season", "IST")
+SEASON_TYPES = ("Regular Season", "Playoffs", "Pre Season", "IST", "PlayIn")
 
 
 def parse_date(value: str | None) -> date:
@@ -32,10 +28,6 @@ def parse_date(value: str | None) -> date:
 
 
 def season_from_date(d: date) -> str:
-    """
-    NBA season label like '2026-27'.
-    New season is treated as starting October 1.
-    """
     start = d.year if d.month >= 10 else d.year - 1
     return f"{start}-{(start + 1) % 100:02d}"
 
@@ -57,16 +49,38 @@ def is_ist_window(d: date | None) -> bool:
     return False
 
 
+def play_in_window(d: date | None) -> tuple[date, date] | None:
+    """
+    Approximate Play-In Tournament window for the tip calendar year.
+
+    NBA Play-In is typically the Tuesday–Friday before the playoffs start
+    (second full week of April). We use Apr 11–14 as the core window;
+    Apr 15+ is treated as Playoffs (first round can start ~Apr 19).
+    """
+    if d is None:
+        return None
+    y = d.year
+    return date(y, 4, 11), date(y, 4, 14)
+
+
+def is_play_in_window(d: date | None) -> bool:
+    win = play_in_window(d)
+    if win is None or d is None:
+        return False
+    return win[0] <= d <= win[1]
+
+
 def season_type_from_date(d: date | None) -> str:
     """
     Heuristic season_type for NBA Stats dashboards.
 
-    Playoffs window: April 15 – June 30 (inclusive) on the tip calendar.
+    Priority: PlayIn (Apr 11–14) → Playoffs (Apr 15–Jun 30) → Regular Season.
     IST tips still use Regular Season boards (Cup games are RS-counted).
-    Everything else → Regular Season.
     """
     if d is None:
         return "Regular Season"
+    if is_play_in_window(d):
+        return "PlayIn"
     if d.month == 4 and d.day >= 15:
         return "Playoffs"
     if d.month in (5, 6):
@@ -75,10 +89,11 @@ def season_type_from_date(d: date | None) -> str:
 
 
 def game_mode_from_date(d: date | None) -> str:
-    """Regime label: Playoffs | IST | Regular Season."""
     if d is None:
         return "Regular Season"
     st = season_type_from_date(d)
+    if st == "PlayIn":
+        return "PlayIn"
     if st == "Playoffs":
         return "Playoffs"
     if is_ist_window(d):
@@ -105,6 +120,10 @@ def normalize_season_type(value: str | None) -> str:
         "inseason tournament": "IST",
         "nba cup": "IST",
         "cup": "IST",
+        "playin": "PlayIn",
+        "play in": "PlayIn",
+        "play in tournament": "PlayIn",
+        "playin tournament": "PlayIn",
     }
     if raw in mapping:
         return mapping[raw]
@@ -120,6 +139,9 @@ def boards_season_type(season_type: str) -> str:
     """Map CLI / regime type → NBA Stats season_type_all_star value."""
     if season_type == "IST":
         return "Regular Season"
+    if season_type == "PlayIn":
+        # nba_api SeasonType.playin = "PlayIn"
+        return "PlayIn"
     if season_type in ("Regular Season", "Playoffs", "Pre Season"):
         return season_type
     return "Regular Season"
@@ -131,18 +153,6 @@ def resolve_season(
     season_override: str | None = None,
     season_type_override: str | None = None,
 ) -> tuple[str, date | None, str]:
-    """
-    Return (season_label, game_date_or_None, season_type_or_IST).
-
-    Priority for season label:
-      1. --season override if provided
-      2. --date → season_from_date(date), game_date set
-      3. else CURRENT_SEASON (2026-27), game_date None → latest S2D
-
-    season_type: --season-type override, else Playoffs from tip, else IST
-    window → "IST", else Regular Season. Use `boards_season_type()` when
-    calling NBA Stats endpoints.
-    """
     if season_override:
         season = season_override.strip()
         if len(season) != 7 or season[4] != "-":
@@ -158,13 +168,8 @@ def resolve_season(
     if season_type_override:
         season_type = normalize_season_type(season_type_override)
     else:
-        # Prefer Playoffs over IST if both somehow overlap (they don't)
-        st = season_type_from_date(game_date)
-        if st == "Playoffs":
-            season_type = "Playoffs"
-        elif is_ist_window(game_date):
+        season_type = season_type_from_date(game_date)
+        if season_type == "Regular Season" and is_ist_window(game_date):
             season_type = "IST"
-        else:
-            season_type = "Regular Season"
 
     return season, game_date, season_type

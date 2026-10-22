@@ -329,6 +329,35 @@ def check_espn_odds() -> CheckResult:
     return CheckResult("ESPN closing lines", False, True, f"{n} games with odds", ms)
 
 
+def check_nba_cdn() -> CheckResult:
+    from nba_sim.nba_official import probe_nba_cdn_injury
+
+    t0 = time.time()
+    ok, detail = probe_nba_cdn_injury()
+    ms = (time.time() - t0) * 1000.0
+    return CheckResult("NBA CDN liveData", False, ok, detail, ms)
+
+
+def check_onoff(season: str | None = None) -> CheckResult:
+    from nba_sim.enrich import fetch_team_onoff
+
+    season = season or CURRENT_SEASON
+    # BOS probe
+    tid = 1610612738
+    val, err = soft_fetch(
+        "on/off",
+        lambda: fetch_team_onoff(tid, season, None, use_cache=True),
+        retries=2,
+        use_cache=False,
+    )
+    if err or not val:
+        return CheckResult("TeamPlayerOnOffSummary", False, False, err or "empty", 0.0)
+    n = len(val.get("on") or [])
+    return CheckResult(
+        "TeamPlayerOnOffSummary", False, True, f"{n} on-court rows (BOS probe)", 0.0
+    )
+
+
 def run_doctor(
     *, season: str | None = None, as_json: bool = False
 ) -> tuple[int, str]:
@@ -369,6 +398,8 @@ def run_doctor(
         lambda: check_lineups(season),
         lambda: check_clutch(season),
         check_espn_odds,
+        check_nba_cdn,
+        lambda: check_onoff(season),
     ):
         r = fn()
         checks.append(r)

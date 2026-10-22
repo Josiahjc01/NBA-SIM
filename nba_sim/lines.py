@@ -277,6 +277,8 @@ def light_total_calibration(
     Tiny pace nudge toward market total (never uses finals).
     Returns multiplier on possessions in [0.985, 1.015], or 1.0 if no market.
     """
+    from nba_sim.calibrate import CALIBRATED_TOTAL_PACE_PULL
+
     if market_total is None or market_total <= 0:
         return 1.0
     # Rough expected total ≈ (pace_h+pace_a)/2 * league_ppp*2 ≈ pace * 2.2
@@ -284,8 +286,8 @@ def light_total_calibration(
     if exp <= 0:
         return 1.0
     ratio = float(market_total) / exp
-    # Pull 15% of the gap, clipped
-    adj = 1.0 + 0.15 * (ratio - 1.0)
+    pull = float(CALIBRATED_TOTAL_PACE_PULL)
+    adj = 1.0 + pull * (ratio - 1.0)
     return max(0.985, min(1.015, adj))
 
 

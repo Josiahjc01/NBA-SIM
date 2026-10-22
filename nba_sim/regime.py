@@ -21,12 +21,18 @@ IST_FOUL_MULT = 1.02
 IST_STAR_MIN_BOOST = 1.04
 IST_BENCH_MIN_CUT = 0.95
 
+# Play-In ≈ playoff intensity lite
+PLAYIN_PACE_MULT = 0.975
+PLAYIN_FOUL_MULT = 1.03
+PLAYIN_STAR_MIN_BOOST = 1.06
+PLAYIN_BENCH_MIN_CUT = 0.92
+
 
 def apply_game_mode(matchup: Any, mode: str) -> list[str]:
     """
-    Mutate team pace / foul_rate / player minutes for Playoffs or IST.
+    Mutate team pace / foul_rate / player minutes for Playoffs / PlayIn / IST.
 
-    mode: "Regular Season" | "Playoffs" | "IST"
+    mode: "Regular Season" | "Playoffs" | "PlayIn" | "IST"
     """
     notes: list[str] = []
     mode_norm = (mode or "Regular Season").strip()
@@ -42,6 +48,14 @@ def apply_game_mode(matchup: Any, mode: str) -> list[str]:
             PLAYOFF_BENCH_MIN_CUT,
         )
         label = "Playoffs"
+    elif mode_norm in ("PlayIn", "Play-In", "Play In"):
+        pace_m, foul_m, star_m, bench_m = (
+            PLAYIN_PACE_MULT,
+            PLAYIN_FOUL_MULT,
+            PLAYIN_STAR_MIN_BOOST,
+            PLAYIN_BENCH_MIN_CUT,
+        )
+        label = "PlayIn"
     elif mode_norm in (
         "IST",
         "In-Season Tournament",

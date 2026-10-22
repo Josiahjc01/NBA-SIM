@@ -21,10 +21,11 @@ from nba_sim.data import MatchupData, PlayerSeason, TeamSeason
 from nba_sim.lines import GameLines, LineProbabilities, compute_line_probs
 from nba_sim.statsutil import binomial_se, wilson_interval
 
-# ~2.5–3 pts modern HCA ≈ +1.4pp absolute FG on ~100 poss (FG-only; no pace bump).
-HOME_FG_BOOST = 0.014
-# Mild home TOV relief (road noise / travel); clipped in possession loop.
-HOME_TOV_MULT = 0.97
+# Tuned HCA defaults (see nba_sim.calibrate) — FG-only; no pace bump.
+from nba_sim.calibrate import CALIBRATED_HOME_FG_BOOST, CALIBRATED_HOME_TOV_MULT
+
+HOME_FG_BOOST = CALIBRATED_HOME_FG_BOOST
+HOME_TOV_MULT = CALIBRATED_HOME_TOV_MULT
 MIN_ROTATION = 8
 MAX_ROTATION = 10
 MAX_ARCHETYPE_IN_ROTATION = 2  # pure expected-production rookies
@@ -35,6 +36,10 @@ REGULATION_POSSESSIONS_SCALE = 1.0
 OT_POSSESSIONS = 12  # ~5 min OT ≈ 12 poss each side roughly alternating
 MAX_OT_PERIODS = 3
 SHOOTING_FOUL_RATE = 0.085  # on 2PT attempts (overridden by team FTR when present)
+# Foul trouble: PF rate ≈ FTA-drawn proxy; 5 fouls → sit (minutes already allocated)
+FOUL_TROUBLE_THRESHOLD = 5
+FOUL_ACCUM_RATE = 0.045  # personal fouls per possession (defense)
+BONUS_FTA_BUMP = 1.15  # shooting foul → FT env when in bonus (team fouls≥5/quarter proxy)
 OREB_RATE_DEFAULT = 0.28
 TOV_RATE_FLOOR = 0.08
 TOV_RATE_CEIL = 0.18
@@ -436,6 +441,8 @@ def _build_context(
             )
         clutch_m = float(getattr(p, "clutch_fg_mult", 1.0) or 1.0)
         clutch_m = _clip(clutch_m, 0.97, 1.03)
+        garbage_m = float(getattr(p, "garbage_fg_mult", 1.0) or 1.0)
+        garbage_m = _clip(garbage_m, 0.97, 1.0)
         fg2_p = _clip(
             fg2_p
             * shot_adj
@@ -448,7 +455,8 @@ def _build_context(
             * ff_fg2
             * opp_ff2
             * rim_m
-            * clutch_m,
+            * clutch_m
+            * garbage_m,
             FG_FLOOR,
             FG_CEIL,
         )
@@ -464,6 +472,7 @@ def _build_context(
             * opp_ff3
             * c3_fg
             * clutch_m
+            * garbage_m
             + alt_3,
             FG3_FLOOR,
             FG3_CEIL,
@@ -547,6 +556,21 @@ def _credit_minutes(ctx: _TeamContext) -> None:
         line.min = float(ctx.minutes[i])
 
 
+def _usage_with_foul_trouble(
+    base_usage: np.ndarray, pf: np.ndarray
+) -> np.ndarray:
+    """Down-weight usage for players approaching / over foul limit."""
+    w = base_usage.copy()
+    for i, fouls in enumerate(pf):
+        if fouls >= FOUL_TROUBLE_THRESHOLD:
+            w[i] *= 0.05  # essentially sit
+        elif fouls >= 4:
+            w[i] *= 0.55
+        elif fouls >= 3:
+            w[i] *= 0.80
+    return _safe_norm(w)
+
+
 def _run_possessions(
     offense: _TeamContext,
     defense: _TeamContext,
@@ -560,22 +584,52 @@ def _run_possessions(
     fg_boost = HOME_FG_BOOST if home_offense else 0.0
     tov_rate = offense.tov_rate * (HOME_TOV_MULT if home_offense else 1.0)
     tov_rate = _clip(tov_rate, TOV_RATE_FLOOR, TOV_RATE_CEIL)
+    # Per-game foul accumulators (proxy quarters via team foul count → bonus)
+    off_pf = np.zeros(len(offense.lines), dtype=float)
+    def_pf = np.zeros(len(defense.lines), dtype=float)
+    team_def_fouls = 0  # rolling; bonus after 5 (quarter-ish proxy)
     i = 0
     while i < n_poss:
         i += 1
+        # Occasional defensive personal foul (non-shooting) → FT in bonus
+        if rng.random() < FOUL_ACCUM_RATE:
+            d_idx = _pick(rng, defense.usage)
+            def_pf[d_idx] += 1
+            team_def_fouls += 1
+            if team_def_fouls >= 5:
+                # Bonus: two FT for random offensive player
+                o_idx = _pick(rng, _usage_with_foul_trouble(offense.usage, off_pf))
+                fta = 2
+                offense.lines[o_idx].fta += fta
+                made = 0
+                for _ in range(fta):
+                    if rng.random() < offense.ft[o_idx]:
+                        made += 1
+                offense.lines[o_idx].pts += made
+                points += made
+            continue
+
+        usage = _usage_with_foul_trouble(offense.usage, off_pf)
+
         # Turnover ends possession
         if rng.random() < tov_rate:
-            idx = _pick(rng, offense.usage)
+            idx = _pick(rng, usage)
             offense.lines[idx].tov += 1
             continue
 
-        shooter = _pick(rng, offense.usage)
+        shooter = _pick(rng, usage)
         is_three = rng.random() < offense.three_rate[shooter]
         offense.lines[shooter].fga += 1
 
-        # Shooting foul on 2PT (team FTR when available)
+        # Shooting foul on 2PT (team FTR when available); bump in bonus
         foul_p = float(getattr(offense, "foul_rate", 0.0) or SHOOTING_FOUL_RATE)
+        if team_def_fouls >= 5:
+            foul_p = min(0.20, foul_p * BONUS_FTA_BUMP)
         if (not is_three) and rng.random() < foul_p:
+            # Credited as defensive foul on a random defender
+            d_idx = _pick(rng, defense.usage)
+            def_pf[d_idx] += 1
+            team_def_fouls += 1
             fta = 2
             offense.lines[shooter].fta += fta
             made = 0
@@ -592,8 +646,6 @@ def _run_possessions(
             add = 3 if is_three else 2
             offense.lines[shooter].pts += add
             points += add
-            # Assist: probability scales with team AST/FGM prior via ast weights
-            # ~65% of makes assisted (NBA-ish); drawer ≠ shooter
             if rng.random() < 0.65 and len(offense.lines) > 1:
                 aw = offense.ast_w.copy()
                 aw[shooter] = 0.0
@@ -606,7 +658,6 @@ def _run_possessions(
         if rng.random() < offense.oreb_rate:
             reb_idx = _pick(rng, offense.oreb_w)
             offense.lines[reb_idx].reb += 1
-            # Offensive rebound → extra possession (does not consume the allotment)
             i -= 1
         else:
             reb_idx = _pick(rng, defense.dreb_w)

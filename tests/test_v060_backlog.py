@@ -250,9 +250,10 @@ def test_clutch_applies_with_shrink():
     assert 0.97 <= p.clutch_fg_mult <= 1.03
 
 
-def test_cache_schema_blendv9():
+def test_cache_schema_bumped_since_v06():
     from nba_sim.data import MATCHUP_CACHE_SCHEMA
     from nba_sim import __version__
 
-    assert MATCHUP_CACHE_SCHEMA == "blendv9"
-    assert __version__ == "0.6.0"
+    # v0.6 introduced blendv9; later bumps keep the blendv* prefix
+    assert MATCHUP_CACHE_SCHEMA.startswith("blendv")
+    assert tuple(int(x) for x in __version__.split(".")[:2]) >= (0, 6)

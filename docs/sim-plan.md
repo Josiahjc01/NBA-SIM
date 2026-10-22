@@ -13,9 +13,10 @@
 - **Do not** pass CSVs of box scores or player stats — the system fetches priors.
 - Engine is **team-agnostic** for all 30 franchises (`nba_api` static + aliases + arena coords). Only DEN home altitude is a venue special case.
 - If `--date` / `--season` omitted → **live `2026-27`** season-to-date (`CURRENT_SEASON`).
-- If `--date` or slate date is set → season from that calendar date; **priors only through the day before tip** (pre-tip cutoff). Tip dates ≈ Apr 15–Jun 30 → **Playoffs** boards; ≈ Nov 21–Dec 17 → **IST/NBA Cup** regime (RS boards). Override with `--season-type`. See [realism-audit.md](./realism-audit.md).
+- If `--date` or slate date is set → season from that calendar date; **priors only through the day before tip** (pre-tip cutoff). Tip dates ≈ Apr 11–14 → **PlayIn**; Apr 15–Jun 30 → **Playoffs**; ≈ Nov 21–Dec 17 → **IST/NBA Cup** regime (RS boards). Override with `--season-type`. See [realism-audit.md](./realism-audit.md).
 - `--fixtures` is offline smoke only — **never** the default; live failures raise (no silent fixture swap).
-- Cache schema **`blendv9`** — use `--no-cache` once after upgrading.
+- Cache schema **`blendv10`** — use `--no-cache` once after upgrading.
+- Every text/JSON report ends with **Top 5 wagers** (ML/spread/total/player leans; no invented book odds).
 
 ```bash
 python -m nba_sim --home BOS --away NYK --n 5000

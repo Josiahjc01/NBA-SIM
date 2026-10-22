@@ -40,8 +40,8 @@ def build_parser() -> argparse.ArgumentParser:
         "command",
         nargs="?",
         default=None,
-        choices=["doctor"],
-        help="Optional subcommand: `doctor` verifies live data sources.",
+        choices=["doctor", "calibrate"],
+        help="Optional subcommand: `doctor` | `calibrate` (historical bias study).",
     )
 
     mode = p.add_mutually_exclusive_group()
@@ -88,9 +88,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="TYPE",
         help=(
-            "Regular Season | Playoffs | Pre Season | IST. Default: derived from "
-            "--date (Playoffs ≈ Apr 15–Jun 30; IST/NBA Cup ≈ Nov 21–Dec 17). "
-            "IST still uses Regular Season boards + Cup regime."
+            "Regular Season | Playoffs | PlayIn | Pre Season | IST. Default: "
+            "from --date (PlayIn ≈ Apr 11–14; Playoffs ≈ Apr 15–Jun 30; "
+            "IST/NBA Cup ≈ Nov 21–Dec 17). IST uses RS boards + Cup regime."
         ),
     )
     p.add_argument("--n", type=int, default=5000, help="Number of simulations (default 5000; max 200000)")
@@ -208,13 +208,15 @@ def _want_injuries(args) -> bool:
     return not bool(getattr(args, "fixtures", False) or getattr(args, "fixture_file", None))
 
 
-def _apply_injury_flags(matchup, args):
+def _apply_injury_flags(matchup, args, game_date=None):
     if not _want_injuries(args):
         return matchup
     apply_injuries(
         matchup,
         live=not bool(args.injuries_csv),
         csv_path=args.injuries_csv,
+        game_date=game_date,
+        use_cache=not getattr(args, "no_cache", False),
     )
     return matchup
 
@@ -294,17 +296,45 @@ def _run_one_matchup(
         if len(enotes) > 10:
             _log(args, f"  enrich: … +{len(enotes) - 10} more")
 
-    _apply_injury_flags(matchup, args)
+    _apply_injury_flags(matchup, args, game_date=game_date)
     if matchup.injury_notes:
         for n in matchup.injury_notes[:8]:
             _log(args, f"  injury: {n}")
         if len(matchup.injury_notes) > 8:
             _log(args, f"  injury: … +{len(matchup.injury_notes) - 8} more")
+
+    # Referee tendencies from pre-tip Officials (stashed during injury fetch)
+    from nba_sim.refs import apply_ref_tendencies
+
+    officials = getattr(matchup, "_pre_tip_officials", None)
+    if not force_fx and game_date is not None and officials is None:
+        # Injuries skipped — still try official crew
+        try:
+            from nba_sim.nba_official import fetch_pre_tip_game_context
+
+            ctx = fetch_pre_tip_game_context(
+                game_date,
+                home_team_id=int(matchup.home.team_id),
+                away_team_id=int(matchup.away.team_id),
+                use_cache=not args.no_cache,
+            )
+            officials = ctx.officials
+            for n in ctx.notes:
+                if "official" in n.lower() or "nba-inactive" in n or "nba-cdn" in n:
+                    _log(args, f"  nba: {n}")
+        except Exception as exc:  # noqa: BLE001
+            _log(args, f"  refs: crew fetch failed ({exc})")
+    rnotes_ref = apply_ref_tendencies(matchup, officials)
+    for n in rnotes_ref:
+        _log(args, f"  {n}")
+
     _apply_rest_flags(matchup, game_date, args)
 
-    # Playoff / IST regime (after injuries so OUT players stay out)
-    mode = season_type if season_type in ("Playoffs", "IST") else (
-        matchup.game_mode or "Regular Season"
+    # Playoff / PlayIn / IST regime (after injuries so OUT players stay out)
+    mode = (
+        season_type
+        if season_type in ("Playoffs", "PlayIn", "IST")
+        else (matchup.game_mode or "Regular Season")
     )
     rnotes = apply_game_mode(matchup, mode)
     for n in rnotes:
@@ -590,6 +620,34 @@ def main(argv: list[str] | None = None) -> int:
         code, text = run_doctor(season=args.season, as_json=bool(args.json))
         print(text)
         return code
+    if getattr(args, "command", None) == "calibrate":
+        from nba_sim.calibrate import study_historical_bias
+
+        report = study_historical_bias(lookback_days=14, use_cache=not args.no_cache)
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "n_games": report.n_games,
+                        "home_win_rate_actual": report.home_win_rate_actual,
+                        "mean_total_actual": report.mean_total_actual,
+                        "suggested_home_fg_boost": report.suggested_home_fg_boost,
+                        "suggested_total_pace_pull": report.suggested_total_pace_pull,
+                        "notes": report.notes,
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            print("nba_sim calibrate — post-tip settled scoreboard study")
+            print("(never used as same-game sim input)")
+            for n in report.notes:
+                print(f"  {n}")
+            print(
+                f"  suggested HOME_FG_BOOST={report.suggested_home_fg_boost} "
+                f"total_pace_pull={report.suggested_total_pace_pull}"
+            )
+        return 0 if report.n_games else 1
     bad = _validate_args(args)
     if bad is not None:
         return bad

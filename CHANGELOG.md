@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.7.0
+Gap finish + next-tier accuracy; cache schema **`blendv10`**. Top 5 wagers at bottom of every report.
+
+1. **NBA inactive** — pre-tip `BoxScoreSummary` InactivePlayers (skip Final); CDN probe + loud 403; merge with ESPN  
+2. **Garbage-time** — season eFG≫clutch proxy with heavy shrink; skip if thin  
+3. **Play-In** — Apr 11–14 → `PlayIn` boards + regime (not silent RS)  
+4. **Calibration** — tuned HCA/total pull; `python -m nba_sim calibrate` settled study; market edge notes  
+5. **Foul trouble / FT** — PF accum → usage sit; bonus FTA bump  
+6. **On/off** — `TeamPlayerOnOffSummary` mean on-NET → mild ORtg  
+7. **Starters** — top-5 last-N/evidence minutes → projected starter min boost  
+8. **Refs** — pre-tip Officials + static tendency table; skip loudly if unmatched  
+9. **Load mgmt** — 4-in-6 + star minute haircuts on dense/B2B  
+
+Also: **Top 5 wagers** section (ML/spread/total/player leans; no invented odds).
+
 ## 0.6.0
 Accuracy backlog (all 8) in one bump; cache schema **`blendv9`** (`--no-cache` once after upgrade).
 
