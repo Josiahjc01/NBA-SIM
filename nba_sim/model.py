@@ -18,6 +18,7 @@ import numpy as np
 
 from nba_sim.data import MatchupData, PlayerSeason, TeamSeason
 from nba_sim.lines import GameLines, LineProbabilities, compute_line_probs
+from nba_sim.statsutil import wilson_interval
 
 HOME_FG_BOOST = 0.015  # absolute; justified home-court shooting edge
 MIN_ROTATION = 8
@@ -89,6 +90,12 @@ class SimSummary:
     total_p10: float = 0.0
     total_p50: float = 0.0
     total_p90: float = 0.0
+    # Wilson 95% CI on win rates
+    home_win_lo: float = 0.0
+    home_win_hi: float = 1.0
+    away_win_lo: float = 0.0
+    away_win_hi: float = 1.0
+    seed: int | None = None
 
 
 @dataclass
@@ -425,8 +432,12 @@ def run_simulations(
         )
 
     totals = home_scores + away_scores
+
     def _pctile(arr: np.ndarray, q: float) -> float:
         return float(np.percentile(arr, q))
+
+    home_lo, home_hi = wilson_interval(float(home_wins), n)
+    away_lo, away_hi = wilson_interval(float(away_wins), n)
 
     return SimSummary(
         n=n,
@@ -454,6 +465,11 @@ def run_simulations(
         total_p10=_pctile(totals, 10),
         total_p50=_pctile(totals, 50),
         total_p90=_pctile(totals, 90),
+        home_win_lo=home_lo,
+        home_win_hi=home_hi,
+        away_win_lo=away_lo,
+        away_win_hi=away_hi,
+        seed=seed,
     )
 
 

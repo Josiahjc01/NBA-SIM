@@ -7,7 +7,7 @@ import json
 import sys
 
 from nba_sim import __version__
-from nba_sim.data import load_matchup
+from nba_sim.data import load_matchup, set_quiet
 from nba_sim.injuries import apply_injuries
 from nba_sim.lines import GameLines, load_lines_csv, lines_from_args
 from nba_sim.model import run_simulations
@@ -70,9 +70,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Emit machine-readable JSON summary (single-game) or slate rows (slate mode).",
     )
     p.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress progress / loading chatter (errors still print).",
+    )
+    p.add_argument(
         "--quiet-priors",
         action="store_true",
         help="Omit per-player prior provenance block from text report (team notes kept).",
+    )
+    p.add_argument(
+        "--top",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Show at most N players per side in the text box score table.",
     )
     p.add_argument(
         "--no-rest",
@@ -137,6 +149,11 @@ def _apply_injury_flags(matchup, args):
     return matchup
 
 
+def _log(args, msg: str) -> None:
+    if not getattr(args, "quiet", False):
+        print(msg)
+
+
 def _apply_rest_flags(matchup, game_date, args):
     if args.no_rest or game_date is None:
         return matchup
@@ -147,7 +164,7 @@ def _apply_rest_flags(matchup, game_date, args):
     )
     matchup.rest_notes = notes
     for n in notes:
-        print(f"  rest: {n}")
+        _log(args, f"  rest: {n}")
     return matchup
 
 
@@ -175,7 +192,7 @@ def _run_one_matchup(
     issues = validate_matchup(matchup)
     hard = [i for i in issues if "only" in i or "identical" in i]
     for i in issues:
-        print(f"  validate: {i}")
+        _log(args, f"  validate: {i}")
     if hard:
         raise RuntimeError("matchup failed validation: " + "; ".join(hard))
     summary = run_simulations(matchup, n=args.n, seed=seed, lines=lines)
@@ -211,9 +228,10 @@ def _run_single(args) -> int:
         date_msg = f", tip {game_date.isoformat()}, priors through {prior_through}"
     else:
         date_msg = ", latest season-to-date"
-    print(
+    _log(
+        args,
         f"Loading LIVE priors for {away['abbreviation']} @ {home['abbreviation']} "
-        f"(season {season}{date_msg}) ..."
+        f"(season {season}{date_msg}) ...",
     )
 
     lines = lines_from_args(spread=args.spread, total=args.total)
@@ -233,23 +251,27 @@ def _run_single(args) -> int:
         return 1
 
     if matchup.source == "fixture":
-        print("USING FIXTURE DATA (outdated sample — NOT live 2026-27)")
+        _log(args, "USING FIXTURE DATA (outdated sample — NOT live 2026-27)")
     elif matchup.source == "cache":
-        print(f"Using cached live priors (season {matchup.season})")
+        _log(args, f"Using cached live priors (season {matchup.season})")
     else:
-        print(f"Using live NBA Stats (season {matchup.season})")
+        _log(args, f"Using live NBA Stats (season {matchup.season})")
 
-    print(
+    _log(
+        args,
         f"Running {args.n} sims "
         f"({matchup.home.abbreviation} pace={matchup.home.pace:.1f}, "
-        f"{matchup.away.abbreviation} pace={matchup.away.pace:.1f}) ..."
+        f"{matchup.away.abbreviation} pace={matchup.away.pace:.1f}) ...",
     )
     if args.json:
         print(format_json_report(summary, matchup))
     else:
         print(
             format_report(
-                summary, matchup, quiet_priors=bool(args.quiet_priors)
+                summary,
+                matchup,
+                quiet_priors=bool(args.quiet_priors) or bool(args.quiet),
+                top_players=args.top,
             )
         )
     return 0
@@ -267,15 +289,16 @@ def _run_slate(args) -> int:
             file=sys.stderr,
         )
 
-    print(
+    _log(
+        args,
         f"Loading slate for {slate_date.isoformat()} "
-        f"(US/Eastern calendar day; schedule only — no box-score leak) ..."
+        f"(US/Eastern calendar day; schedule only — no box-score leak) ...",
     )
 
     try:
         if args.fixtures:
             games = fixture_slate(slate_date)
-            print("USING FIXTURE SLATE (SAC @ LAC sample)")
+            _log(args, "USING FIXTURE SLATE (SAC @ LAC sample)")
         else:
             games = fetch_slate(slate_date)
     except Exception as e:  # noqa: BLE001
@@ -286,7 +309,7 @@ def _run_slate(args) -> int:
         print(f"No NBA games found for {slate_date.isoformat()}.", file=sys.stderr)
         return 1
 
-    print(f"Found {len(games)} game(s). Running {args.n} sims each ...")
+    _log(args, f"Found {len(games)} game(s). Running {args.n} sims each ...")
 
     lines_map = load_lines_csv(args.lines_csv) if args.lines_csv else {}
     global_lines = lines_from_args(spread=args.spread, total=args.total)
@@ -307,7 +330,7 @@ def _run_slate(args) -> int:
         key = (g.away_abbr.upper(), g.home_abbr.upper())
         gl = lines_map.get(key) or global_lines
         seed = None if args.seed is None else args.seed + i
-        print(f"  [{i + 1}/{len(games)}] {g.away_abbr} @ {g.home_abbr} ...")
+        _log(args, f"  [{i + 1}/{len(games)}] {g.away_abbr} @ {g.home_abbr} ...")
         try:
             matchup, summary = _run_one_matchup(
                 home,
@@ -390,6 +413,7 @@ def main(argv: list[str] | None = None) -> int:
     bad = _validate_args(args)
     if bad is not None:
         return bad
+    set_quiet(bool(args.quiet) or bool(args.json))
     slate_mode = bool(args.slate or args.slate_date is not None)
     if slate_mode:
         return _run_slate(args)

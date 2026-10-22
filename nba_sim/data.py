@@ -40,6 +40,19 @@ CACHE_DIR = Path(__file__).resolve().parents[1] / ".cache"
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 CACHE_TTL_SECONDS = 6 * 60 * 60  # shorter so live S2D stays fresh
 
+# When True, suppress informational prints (warnings for hard failures still raise).
+_QUIET = False
+
+
+def set_quiet(quiet: bool) -> None:
+    global _QUIET
+    _QUIET = bool(quiet)
+
+
+def _say(msg: str) -> None:
+    if not _QUIET:
+        _say(msg)
+
 
 @dataclass
 class PlayerSeason:
@@ -685,11 +698,11 @@ def _load_live(
     if cached:
         md = _matchup_from_dict(cached, source="cache")
         if md.season != season:
-            print(f"  ignoring cache with season={md.season} (want {season})")
+            _say(f"  ignoring cache with season={md.season} (want {season})")
         else:
             return md
 
-    print(
+    _say(
         f"  fetching live NBA Stats for season {season} "
         f"(regular + preseason + last-season blend) ..."
     )
@@ -702,12 +715,12 @@ def _load_live(
 
     # Beginning of season: always pull last season (full) + current preseason.
     if allow_fallback:
-        print(f"  fetching last season {fb_season} priors (full regular season) ...")
+        _say(f"  fetching last season {fb_season} priors (full regular season) ...")
         try:
             fallback_player_rows = _fetch_league_player_stats(fb_season, None)
             fallback_team_rows = _fetch_league_team_stats(fb_season, None)
         except Exception as exc:  # noqa: BLE001
-            print(f"  last-season warning: {exc}")
+            _say(f"  last-season warning: {exc}")
             fallback_player_rows = None
             fallback_team_rows = None
             if not player_rows:
@@ -715,14 +728,14 @@ def _load_live(
                     f"No player rows for {season} and last season {fb_season} failed."
                 ) from exc
 
-        print(f"  fetching {season} Pre Season player priors ...")
+        _say(f"  fetching {season} Pre Season player priors ...")
         try:
             preseason_player_rows = _fetch_league_player_stats(
                 season, None, season_type="Pre Season"
             )
-            print(f"  preseason rows: {len(preseason_player_rows)}")
+            _say(f"  preseason rows: {len(preseason_player_rows)}")
         except Exception as exc:  # noqa: BLE001
-            print(f"  preseason warning: {exc}")
+            _say(f"  preseason warning: {exc}")
             preseason_player_rows = None
 
     if not player_rows and not fallback_player_rows and not preseason_player_rows:
@@ -745,30 +758,30 @@ def _load_live(
         roster_home = {int(r["PLAYER_ID"]) for r in rh}
         meta_home = parse_roster_meta(rh)
     except Exception as exc:  # noqa: BLE001
-        print(f"  roster home warning: {exc}")
+        _say(f"  roster home warning: {exc}")
         if allow_fallback:
             try:
                 rh = _fetch_roster(int(home["id"]), fb_season)
                 roster_home = {int(r["PLAYER_ID"]) for r in rh}
                 meta_home = parse_roster_meta(rh)
-                print(f"  using {fb_season} roster for home as guide")
+                _say(f"  using {fb_season} roster for home as guide")
             except Exception as exc2:  # noqa: BLE001
-                print(f"  roster home fallback warning: {exc2}")
+                _say(f"  roster home fallback warning: {exc2}")
                 roster_home = None
     try:
         ra = _fetch_roster(int(away["id"]), season)
         roster_away = {int(r["PLAYER_ID"]) for r in ra}
         meta_away = parse_roster_meta(ra)
     except Exception as exc:  # noqa: BLE001
-        print(f"  roster away warning: {exc}")
+        _say(f"  roster away warning: {exc}")
         if allow_fallback:
             try:
                 ra = _fetch_roster(int(away["id"]), fb_season)
                 roster_away = {int(r["PLAYER_ID"]) for r in ra}
                 meta_away = parse_roster_meta(ra)
-                print(f"  using {fb_season} roster for away as guide")
+                _say(f"  using {fb_season} roster for away as guide")
             except Exception as exc2:  # noqa: BLE001
-                print(f"  roster away fallback warning: {exc2}")
+                _say(f"  roster away fallback warning: {exc2}")
                 roster_away = None
 
     primary_players = player_rows or []
@@ -821,12 +834,12 @@ def _load_live(
         provenance=provenance,
     )
     _write_cache(cache_key, _matchup_to_dict(md))
-    print(
+    _say(
         f"  live OK: {home_t.abbreviation} n={len(home_t.players)} "
         f"{away_t.abbreviation} n={len(away_t.players)} season={season}"
     )
     for line in provenance.summary_lines():
-        print(f"  prior: {line}")
+        _say(f"  prior: {line}")
     return md
 
 
@@ -954,13 +967,13 @@ def load_matchup(
     Fixtures: ONLY if force_fixtures=True. Never silent fixture fallback.
     """
     if force_fixtures:
-        print(
+        _say(
             "WARNING: --fixtures uses bundled OUTDATED sample data "
             "(not live 2026-27). For real sims, omit --fixtures."
         )
         fx = load_fixture()
         if home["abbreviation"] != "SAC" or away["abbreviation"] != "LAC":
-            print(
+            _say(
                 f"NOTE: --fixtures always loads bundled SAC/LAC sample "
                 f"(requested {away['abbreviation']} @ {home['abbreviation']})."
             )

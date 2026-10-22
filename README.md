@@ -93,7 +93,9 @@ Live odds feeds are not wired; pass lines via flags or `--lines-csv` for slate.
 | `--n` | no | Simulations per game (default 5000; max 200000) |
 | `--seed` | no | RNG seed |
 | `--json` | no | Machine-readable JSON output |
+| `--quiet` | no | Suppress loading/progress chatter |
 | `--quiet-priors` | no | Compact provenance (team notes only) |
+| `--top N` | no | Limit player rows per side in text output |
 | `--no-rest` | no | Disable B2B check when tip date is set |
 | `--no-cache` | no | Bypass on-disk API cache |
 | `--no-fallback` | no | Current-season priors only |

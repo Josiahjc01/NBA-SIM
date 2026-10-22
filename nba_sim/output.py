@@ -19,6 +19,7 @@ def format_report(
     matchup: MatchupData,
     *,
     quiet_priors: bool = False,
+    top_players: int | None = None,
 ) -> str:
     lines: list[str] = []
     lines.append("=" * 64)
@@ -89,8 +90,14 @@ def format_report(
         f" + tie {_pct(summary.tie_pct)} = {_pct(win_sum)}"
     )
     lines.append(
+        f"Win% 95% Wilson CI — "
+        f"{summary.away_abbr} [{_pct(summary.away_win_lo)}, {_pct(summary.away_win_hi)}]  |  "
+        f"{summary.home_abbr} [{_pct(summary.home_win_lo)}, {_pct(summary.home_win_hi)}]"
+    )
+    lines.append(
         f"OT rate: {_pct(summary.ot_rate)} of sims "
         f"(regulation ties go to OT; pushes≈{_pct(summary.tie_pct)})"
+        + (f"  |  seed={summary.seed}" if summary.seed is not None else "")
     )
 
     if summary.line_probs is not None:
@@ -106,23 +113,31 @@ def format_report(
     lines.append(f"{summary.away_abbr} — avg player box (PTS / REB / AST)")
     lines.append("-" * 64)
     lines.append(f"{'Player':<24} {'MIN':>6} {'PTS':>6} {'REB':>6} {'AST':>6}")
+    away_shown = 0
     for p in summary.away_players:
         if p["min"] < 8 and p["pts"] < 4:
             continue
         lines.append(
             f"{p['name']:<24} {p['min']:6.1f} {p['pts']:6.1f} {p['reb']:6.1f} {p['ast']:6.1f}"
         )
+        away_shown += 1
+        if top_players is not None and away_shown >= top_players:
+            break
 
     lines.append("")
     lines.append(f"{summary.home_abbr} — avg player box (PTS / REB / AST)")
     lines.append("-" * 64)
     lines.append(f"{'Player':<24} {'MIN':>6} {'PTS':>6} {'REB':>6} {'AST':>6}")
+    home_shown = 0
     for p in summary.home_players:
         if p["min"] < 8 and p["pts"] < 4:
             continue
         lines.append(
             f"{p['name']:<24} {p['min']:6.1f} {p['pts']:6.1f} {p['reb']:6.1f} {p['ast']:6.1f}"
         )
+        home_shown += 1
+        if top_players is not None and home_shown >= top_players:
+            break
 
     # Quick reconciliation of mean player pts vs team mean
     away_sum = sum(p["pts"] for p in summary.away_players)
@@ -163,8 +178,11 @@ def summary_to_dict(summary: SimSummary, matchup: MatchupData) -> dict[str, Any]
         "home_std": summary.home_std,
         "away_win_pct": summary.away_win_pct,
         "home_win_pct": summary.home_win_pct,
+        "away_win_ci95": [summary.away_win_lo, summary.away_win_hi],
+        "home_win_ci95": [summary.home_win_lo, summary.home_win_hi],
         "tie_pct": summary.tie_pct,
         "ot_rate": summary.ot_rate,
+        "seed": summary.seed,
         "mean_total": summary.mean_total,
         "percentiles": {
             "away": {"p10": summary.away_p10, "p50": summary.away_p50, "p90": summary.away_p90},
