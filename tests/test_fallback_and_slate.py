@@ -7,7 +7,7 @@ from datetime import date
 
 import numpy as np
 
-from nba_sim.cli import build_parser
+from nba_sim.cli import build_parser, main
 from nba_sim.data import (
     MatchupData,
     _build_team_with_fallback,
@@ -221,6 +221,27 @@ class FixtureSmokeTests(unittest.TestCase):
         md = load_matchup(home, away, "2026-27", force_fixtures=True)
         self.assertEqual(md.source, "fixture")
         self.assertIsInstance(md, MatchupData)
+
+    def test_den_min_fixture_file(self):
+        from pathlib import Path
+
+        path = Path(__file__).resolve().parents[1] / "nba_sim" / "fixtures" / "den_min.json"
+        rc = main(
+            [
+                "--home",
+                "MIN",
+                "--away",
+                "DEN",
+                "--fixture-file",
+                str(path),
+                "--n",
+                "40",
+                "--seed",
+                "5",
+                "--quiet",
+            ]
+        )
+        self.assertEqual(rc, 0)
 
 
 class InjuryStubTests(unittest.TestCase):

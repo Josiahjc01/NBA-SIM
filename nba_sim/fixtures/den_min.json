@@ -1,0 +1,42 @@
+{
+  "season": "2024-25",
+  "source": "fixture",
+  "as_of": "2025-04-01",
+  "game_date": null,
+  "home": {
+    "team_id": 1610612750,
+    "abbreviation": "MIN",
+    "full_name": "Minnesota Timberwolves",
+    "pace": 97.5,
+    "off_rating": 115.8,
+    "def_rating": 109.5,
+    "players": [
+      {"player_id": 1630162, "name": "Anthony Edwards", "team_id": 1610612750, "team_abbr": "MIN", "gp": 70, "min": 36.0, "pts": 27.5, "reb": 5.5, "oreb": 0.8, "dreb": 4.7, "ast": 5.0, "tov": 3.0, "fga": 20.5, "fgm": 9.2, "fg_pct": 0.449, "fg3a": 8.0, "fg3m": 3.0, "fg3_pct": 0.375, "fta": 6.5, "ft_pct": 0.830},
+      {"player_id": 1626157, "name": "Karl-Anthony Towns", "team_id": 1610612750, "team_abbr": "MIN", "gp": 62, "min": 34.0, "pts": 22.0, "reb": 9.5, "oreb": 2.5, "dreb": 7.0, "ast": 3.0, "tov": 2.5, "fga": 16.0, "fgm": 8.0, "fg_pct": 0.500, "fg3a": 4.5, "fg3m": 1.8, "fg3_pct": 0.400, "fta": 4.5, "ft_pct": 0.850},
+      {"player_id": 203952, "name": "Rudy Gobert", "team_id": 1610612750, "team_abbr": "MIN", "gp": 70, "min": 33.0, "pts": 13.5, "reb": 12.5, "oreb": 3.5, "dreb": 9.0, "ast": 1.5, "tov": 1.5, "fga": 8.0, "fgm": 5.2, "fg_pct": 0.650, "fg3a": 0.0, "fg3m": 0.0, "fg3_pct": 0.0, "fta": 4.0, "ft_pct": 0.650},
+      {"player_id": 1627732, "name": "Jaden McDaniels", "team_id": 1610612750, "team_abbr": "MIN", "gp": 68, "min": 30.0, "pts": 11.5, "reb": 3.5, "oreb": 1.0, "dreb": 2.5, "ast": 1.8, "tov": 1.0, "fga": 9.0, "fgm": 4.2, "fg_pct": 0.467, "fg3a": 3.5, "fg3m": 1.2, "fg3_pct": 0.343, "fta": 1.5, "ft_pct": 0.750},
+      {"player_id": 1629020, "name": "Mike Conley", "team_id": 1610612750, "team_abbr": "MIN", "gp": 65, "min": 28.0, "pts": 10.5, "reb": 2.8, "oreb": 0.4, "dreb": 2.4, "ast": 5.5, "tov": 1.5, "fga": 8.5, "fgm": 3.5, "fg_pct": 0.412, "fg3a": 4.5, "fg3m": 1.8, "fg3_pct": 0.400, "fta": 1.5, "ft_pct": 0.880},
+      {"player_id": 1629675, "name": "Naz Reid", "team_id": 1610612750, "team_abbr": "MIN", "gp": 70, "min": 24.0, "pts": 13.0, "reb": 5.0, "oreb": 1.2, "dreb": 3.8, "ast": 1.5, "tov": 1.2, "fga": 10.0, "fgm": 4.5, "fg_pct": 0.450, "fg3a": 4.5, "fg3m": 1.7, "fg3_pct": 0.378, "fta": 2.0, "ft_pct": 0.750},
+      {"player_id": 1630180, "name": "Nickeil Alexander-Walker", "team_id": 1610612750, "team_abbr": "MIN", "gp": 70, "min": 22.0, "pts": 8.5, "reb": 2.5, "oreb": 0.5, "dreb": 2.0, "ast": 2.5, "tov": 1.0, "fga": 7.5, "fgm": 3.0, "fg_pct": 0.400, "fg3a": 4.0, "fg3m": 1.4, "fg3_pct": 0.350, "fta": 1.0, "ft_pct": 0.720},
+      {"player_id": 1627827, "name": "Donte DiVincenzo", "team_id": 1610612750, "team_abbr": "MIN", "gp": 60, "min": 26.0, "pts": 11.0, "reb": 3.5, "oreb": 0.8, "dreb": 2.7, "ast": 3.0, "tov": 1.3, "fga": 9.5, "fgm": 3.6, "fg_pct": 0.379, "fg3a": 6.5, "fg3m": 2.4, "fg3_pct": 0.369, "fta": 1.2, "ft_pct": 0.780}
+    ]
+  },
+  "away": {
+    "team_id": 1610612743,
+    "abbreviation": "DEN",
+    "full_name": "Denver Nuggets",
+    "pace": 98.5,
+    "off_rating": 118.5,
+    "def_rating": 112.0,
+    "players": [
+      {"player_id": 203999, "name": "Nikola Jokic", "team_id": 1610612743, "team_abbr": "DEN", "gp": 70, "min": 36.5, "pts": 26.5, "reb": 12.5, "oreb": 2.8, "dreb": 9.7, "ast": 9.5, "tov": 3.2, "fga": 18.0, "fgm": 10.0, "fg_pct": 0.556, "fg3a": 4.0, "fg3m": 1.5, "fg3_pct": 0.375, "fta": 5.5, "ft_pct": 0.820},
+      {"player_id": 1627750, "name": "Jamal Murray", "team_id": 1610612743, "team_abbr": "DEN", "gp": 55, "min": 34.0, "pts": 20.5, "reb": 4.0, "oreb": 0.6, "dreb": 3.4, "ast": 6.0, "tov": 2.2, "fga": 16.5, "fgm": 7.5, "fg_pct": 0.455, "fg3a": 6.0, "fg3m": 2.3, "fg3_pct": 0.383, "fta": 3.5, "ft_pct": 0.870},
+      {"player_id": 203932, "name": "Aaron Gordon", "team_id": 1610612743, "team_abbr": "DEN", "gp": 65, "min": 32.0, "pts": 14.0, "reb": 6.5, "oreb": 2.0, "dreb": 4.5, "ast": 3.5, "tov": 1.5, "fga": 10.5, "fgm": 5.2, "fg_pct": 0.495, "fg3a": 3.0, "fg3m": 1.1, "fg3_pct": 0.367, "fta": 3.0, "ft_pct": 0.700},
+      {"player_id": 1629008, "name": "Michael Porter Jr.", "team_id": 1610612743, "team_abbr": "DEN", "gp": 70, "min": 32.0, "pts": 17.0, "reb": 6.5, "oreb": 1.2, "dreb": 5.3, "ast": 1.8, "tov": 1.2, "fga": 14.0, "fgm": 6.5, "fg_pct": 0.464, "fg3a": 7.0, "fg3m": 2.8, "fg3_pct": 0.400, "fta": 2.0, "ft_pct": 0.800},
+      {"player_id": 1628420, "name": "Kentavious Caldwell-Pope", "team_id": 1610612743, "team_abbr": "DEN", "gp": 70, "min": 30.0, "pts": 9.5, "reb": 2.5, "oreb": 0.5, "dreb": 2.0, "ast": 2.2, "tov": 1.0, "fga": 7.5, "fgm": 3.2, "fg_pct": 0.427, "fg3a": 4.0, "fg3m": 1.5, "fg3_pct": 0.375, "fta": 1.5, "ft_pct": 0.880},
+      {"player_id": 203486, "name": "Russell Westbrook", "team_id": 1610612743, "team_abbr": "DEN", "gp": 65, "min": 26.0, "pts": 12.0, "reb": 5.0, "oreb": 1.2, "dreb": 3.8, "ast": 5.5, "tov": 2.5, "fga": 10.5, "fgm": 4.5, "fg_pct": 0.429, "fg3a": 3.0, "fg3m": 0.9, "fg3_pct": 0.300, "fta": 2.5, "ft_pct": 0.680},
+      {"player_id": 1627826, "name": "Christian Braun", "team_id": 1610612743, "team_abbr": "DEN", "gp": 70, "min": 28.0, "pts": 11.0, "reb": 4.5, "oreb": 1.0, "dreb": 3.5, "ast": 2.0, "tov": 1.0, "fga": 8.5, "fgm": 4.0, "fg_pct": 0.471, "fg3a": 2.5, "fg3m": 0.9, "fg3_pct": 0.360, "fta": 2.0, "ft_pct": 0.750},
+      {"player_id": 1627751, "name": "Peyton Watson", "team_id": 1610612743, "team_abbr": "DEN", "gp": 60, "min": 18.0, "pts": 6.5, "reb": 3.0, "oreb": 0.8, "dreb": 2.2, "ast": 1.0, "tov": 0.7, "fga": 5.5, "fgm": 2.5, "fg_pct": 0.455, "fg3a": 1.5, "fg3m": 0.5, "fg3_pct": 0.333, "fta": 1.2, "ft_pct": 0.700}
+    ]
+  }
+}

@@ -1,6 +1,8 @@
 # NBA Sim
 
-Monte Carlo NBA game simulator. **You only provide the matchup** (or a slate date). The tool pulls **live 2026-27** rosters and season-to-date stats from NBA Stats (`nba_api` → `stats.nba.com`), with **last-season (2025-26) fallback** when current priors are thin.
+Monte Carlo NBA game simulator. **You only provide the matchup** (or a slate date). The tool pulls **live 2026-27** rosters and season-to-date stats from NBA Stats (`nba_api` → `stats.nba.com`), with **beginning-of-season blend** (last season + preseason + draft-scaled rookie priors → regular S2D).
+
+**Model note:** opponent DEF_RATING adjusts make% as `opp_DRtg / league` (higher DRtg = worse D = offense boost). An earlier inverted formula understated good-defense teams (e.g. Clippers).
 
 ## Install
 
