@@ -1,6 +1,6 @@
 # NBA Sim
 
-Monte Carlo NBA game simulator. **You only provide the matchup** (and optionally a date). The tool pulls **live 2026-27** rosters and season-to-date stats from NBA Stats (`nba_api` → `stats.nba.com`).
+Monte Carlo NBA game simulator. **You only provide the matchup** (or a slate date). The tool pulls **live 2026-27** rosters and season-to-date stats from NBA Stats (`nba_api` → `stats.nba.com`), with **last-season (2025-26) fallback** when current priors are thin.
 
 ## Install
 
@@ -10,7 +10,7 @@ source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-**Needs:** Python 3.10+, outbound HTTPS to `stats.nba.com`.
+**Needs:** Python 3.10+, outbound HTTPS to `stats.nba.com` (and optionally ESPN for `--injuries`).
 
 ## Run (default = live 2026-27)
 
@@ -32,31 +32,85 @@ python -m nba_sim --home SAC --away LAC --season 2026-27 --n 5000
 python simulate.py --home SAC --away LAC --n 5000
 ```
 
+### Full-day slate
+
+Simulates **every NBA game** on a calendar day (default: **today US/Eastern**). Reuses the same game model; schedule pull is matchup pairing only (no box-score leak).
+
+```bash
+# Today's slate (US/Eastern)
+python -m nba_sim --slate --n 2000
+
+# Specific date
+python -m nba_sim --slate-date 2026-10-22 --n 2000
+
+# Slate + per-game lines CSV (columns: away,home,spread,total)
+python -m nba_sim --slate-date 2026-10-22 --lines-csv lines.csv --n 2000
+```
+
+Compact table columns: matchup, avg scores, mean total, win%, optional cover%/over%.
+
+### Last-season fallback
+
+- **Primary:** current season (`2026-27` by default), DateTo = day before tip when `--date` / slate date is set.
+- **Threshold:** a team needs ≥ **5** usable players (`GP ≥ 1` and `MIN ≥ 1`).
+- **Fill:** roster players missing/thin current priors get **2025-26** rates; if still short, whole-team fill from last season (including team pace/ORtg/DRtg when needed).
+- **Documented:** report prints which season each player used and team-level notes.
+- **Never** uses same-game box scores. Disable with `--no-fallback`.
+
+### Injuries & betting lines (v1)
+
+```bash
+# ESPN injury feed (unofficial): Out/Doubtful → 0 min; Questionable → ×0.5
+python -m nba_sim --home SAC --away LAC --injuries --n 5000
+
+# Or CSV: name,team,status[,mult]
+python -m nba_sim --home SAC --away LAC --injuries-csv injuries.csv --n 5000
+
+# Lines (home spread / total) → cover% and over% from sims
+python -m nba_sim --home SAC --away LAC --spread -3.5 --total 224.5 --n 5000
+```
+
+Live odds feeds are not wired; pass lines via flags or `--lines-csv` for slate.
+
 ### Arguments
 
 | Flag | Required | Meaning |
 |------|----------|---------|
-| `--home` | yes | Home team name or abbreviation |
-| `--away` | yes | Away team name or abbreviation |
-| `--date` | no | Tip `YYYY-MM-DD`; priors through **D−1** only |
+| `--home` / `--away` | single-game | Team name or abbreviation |
+| `--slate` | slate mode | Full slate for today (US/Eastern) |
+| `--slate-date` | slate mode | Full slate for `YYYY-MM-DD` (US/Eastern) |
+| `--date` | no | Tip `YYYY-MM-DD` (single game); priors through **D−1** |
 | `--season` | no | Season label (default **`2026-27`**) |
-| `--n` | no | Simulations (default 5000) |
+| `--n` | no | Simulations per game (default 5000) |
 | `--seed` | no | RNG seed |
 | `--no-cache` | no | Bypass on-disk API cache |
-| `--fixtures` | no | **Offline smoke only** — outdated bundled sample, **not** live 2026-27 |
+| `--no-fallback` | no | Current-season priors only |
+| `--injuries` | no | Live ESPN injury feed |
+| `--injuries-csv` | no | Injury CSV override |
+| `--spread` / `--total` | no | Home spread / game total |
+| `--lines-csv` | no | Slate lines: `away,home,spread,total` |
+| `--fixtures` | no | **Offline smoke only** — not live 2026-27 |
 
-You do **not** pass player stats, CSVs, or box scores. If live fetch fails, the CLI errors with network guidance (no silent fixture fallback).
+You do **not** pass player stats or box scores. If live fetch fails, the CLI errors (no silent fixture fallback).
 
 ## Output
 
-- Mean (± stdev) team scores over N sims
-- **Win%** for each team (OT breaks regulation ties; `home + away + tie ≈ 100%`)
-- Mean player MIN / PTS / REB / AST for both rotations
+- Mean (± stdev) team scores over N sims + mean total
+- **Win%** for each team (OT breaks regulation ties)
+- Prior-season provenance (which players used which season)
+- Mean player MIN / PTS / REB / AST
+- Optional injury notes + cover%/over% vs lines
 - Consistency / audit line
+
+## Tests
+
+```bash
+PYTHONPATH=. python3 -m unittest tests.test_fallback_and_slate -v
+```
 
 ## Docs
 
-- [docs/sim-plan.md](docs/sim-plan.md) — model, data source, leak rules
+- [docs/sim-plan.md](docs/sim-plan.md) — model, data source, fallback, slate, leak rules
 - [docs/realism-audit.md](docs/realism-audit.md) — leak / bias / consistency audit
 - [docs/project-context.md](docs/project-context.md) — scope and layout
 - [docs/GROK_RUN.md](docs/GROK_RUN.md) — live-run checklist for external runners
@@ -65,6 +119,7 @@ You do **not** pass player stats, CSVs, or box scores. If live fetch fails, the 
 
 ```
 nba_sim/           # package (python -m nba_sim)
+tests/             # unit + fixture smoke
 simulate.py        # thin CLI wrapper
 requirements.txt
 docs/

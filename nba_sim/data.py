@@ -1,7 +1,9 @@
 """Fetch rosters + stats. User supplies teams (+ optional date); we pull priors.
 
 Default path: LIVE 2026-27 season-to-date from stats.nba.com via nba_api.
-Fixtures are ONLY used when the caller passes force_fixtures / --fixtures.
+When a team lacks enough usable current-season players, fill missing (or whole
+team) priors from the previous season. Fixtures are ONLY used when the caller
+passes force_fixtures / --fixtures.
 
 Leak rule: when --date is set, LeagueDash uses DateTo = day before that date
 (pre-tip). We never fetch or read that game's box score / final.
@@ -16,6 +18,12 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
+from nba_sim.fallback import (
+    MIN_USABLE_PLAYERS,
+    PriorProvenance,
+    fallback_season_for,
+    is_usable_player,
+)
 from nba_sim.season import CURRENT_SEASON
 
 CACHE_DIR = Path(__file__).resolve().parents[1] / ".cache"
@@ -48,6 +56,11 @@ class PlayerSeason:
     fg3_pct: float = 0.0
     fta: float = 0.0
     ft_pct: float = 0.75
+    # Which season label the rate priors were taken from (current or fallback).
+    prior_season: str = ""
+    # Injury adjustment applied after fetch (1.0 = full; 0 = out).
+    injury_mult: float = 1.0
+    injury_status: str = ""
 
 
 @dataclass
@@ -59,6 +72,8 @@ class TeamSeason:
     off_rating: float = 112.0
     def_rating: float = 112.0
     players: list[PlayerSeason] = field(default_factory=list)
+    # Season label used for team advanced stats (pace/ORtg/DRtg).
+    team_stats_season: str = ""
 
 
 @dataclass
@@ -69,6 +84,9 @@ class MatchupData:
     source: str  # "live" | "cache" | "fixture"
     as_of: str | None = None  # inclusive last day of priors (YYYY-MM-DD)
     game_date: str | None = None  # tip date if provided; excluded from priors
+    provenance: PriorProvenance | None = None
+    injuries_applied: bool = False
+    injury_notes: list[str] = field(default_factory=list)
 
 
 def _cache_path(key: str) -> Path:
@@ -136,7 +154,7 @@ def _with_retries(label: str, fn):
             return fn()
         except Exception as exc:  # noqa: BLE001
             last = exc
-            wait = min(2 ** attempt, 16)
+            wait = min(2**attempt, 16)
             print(f"  retry {attempt}/{API_RETRIES} {label}: {exc} (sleep {wait}s)")
             time.sleep(wait)
     raise RuntimeError(f"{label} failed after {API_RETRIES} tries: {last}")
@@ -191,7 +209,9 @@ def _fetch_roster(team_id: int, season: str) -> list[dict[str, Any]]:
     return _with_retries(f"CommonTeamRoster({team_id},{season})", call)
 
 
-def _player_from_row(row: dict[str, Any], team_abbr: str) -> PlayerSeason:
+def _player_from_row(
+    row: dict[str, Any], team_abbr: str, *, prior_season: str
+) -> PlayerSeason:
     fga = _f(row, "FGA")
     fgm = _f(row, "FGM")
     fg3a = _f(row, "FG3A")
@@ -230,18 +250,23 @@ def _player_from_row(row: dict[str, Any], team_abbr: str) -> PlayerSeason:
         fg3_pct=fg3_pct,
         fta=fta,
         ft_pct=ft_pct,
+        prior_season=prior_season,
     )
 
 
-def _build_team(
-    team: dict[str, Any],
-    player_rows: list[dict[str, Any]],
-    team_rows: list[dict[str, Any]],
-    roster_ids: set[int] | None,
-) -> TeamSeason:
-    abbr = team["abbreviation"]
-    tid = int(team["id"])
+def _clip_player_rates(p: PlayerSeason) -> PlayerSeason:
+    p.pts = float(min(45.0, max(0.0, p.pts)))
+    p.reb = float(min(20.0, max(0.0, p.reb)))
+    p.ast = float(min(15.0, max(0.0, p.ast)))
+    p.min = float(min(42.0, max(0.0, p.min)))
+    p.fg_pct = float(min(0.75, max(0.0, p.fg_pct)))
+    p.fg3_pct = float(min(0.55, max(0.0, p.fg3_pct)))
+    return p
 
+
+def _team_advanced(
+    tid: int, team_rows: list[dict[str, Any]]
+) -> tuple[float, float, float]:
     pace, ortg, drtg = 100.0, 112.0, 112.0
     for tr in team_rows:
         if int(tr.get("TEAM_ID", 0)) == tid:
@@ -252,26 +277,205 @@ def _build_team(
             ortg = float(min(130.0, max(95.0, ortg)))
             drtg = float(min(130.0, max(95.0, drtg)))
             break
+    return pace, ortg, drtg
 
-    players: list[PlayerSeason] = []
+
+def _index_players_by_id(
+    player_rows: list[dict[str, Any]], tid: int
+) -> dict[int, dict[str, Any]]:
+    out: dict[int, dict[str, Any]] = {}
     for row in player_rows:
         if int(row.get("TEAM_ID", 0)) != tid:
             continue
         pid = int(_f(row, "PLAYER_ID"))
-        if roster_ids is not None and pid not in roster_ids and _f(row, "MIN") < 5:
+        out[pid] = row
+    return out
+
+
+def _index_players_league(
+    player_rows: list[dict[str, Any]],
+) -> dict[int, dict[str, Any]]:
+    """Last row wins; used for prior-season lookup by player id across teams."""
+    out: dict[int, dict[str, Any]] = {}
+    for row in player_rows:
+        pid = int(_f(row, "PLAYER_ID"))
+        out[pid] = row
+    return out
+
+
+def _build_team_with_fallback(
+    team: dict[str, Any],
+    *,
+    primary_season: str,
+    fallback_season: str,
+    primary_players: list[dict[str, Any]],
+    fallback_players: list[dict[str, Any]] | None,
+    primary_teams: list[dict[str, Any]],
+    fallback_teams: list[dict[str, Any]] | None,
+    roster_ids: set[int] | None,
+    provenance: PriorProvenance,
+) -> TeamSeason:
+    abbr = team["abbreviation"]
+    tid = int(team["id"])
+
+    pace, ortg, drtg = _team_advanced(tid, primary_teams)
+    team_stats_season = primary_season
+    # If current-season advanced row is still defaults and fallback exists, prefer fallback.
+    if fallback_teams is not None:
+        has_primary = any(int(tr.get("TEAM_ID", 0)) == tid for tr in primary_teams)
+        if not has_primary:
+            pace, ortg, drtg = _team_advanced(tid, fallback_teams)
+            team_stats_season = fallback_season
+            provenance.team_notes[abbr] = (
+                provenance.team_notes.get(abbr, "")
+                + f" team advanced from {fallback_season};"
+            ).strip()
+
+    by_id_primary = _index_players_by_id(primary_players, tid)
+    by_id_fallback_team = (
+        _index_players_by_id(fallback_players, tid) if fallback_players else {}
+    )
+    by_id_fallback_league = (
+        _index_players_league(fallback_players) if fallback_players else {}
+    )
+
+    # Candidate player ids: roster if available, else anyone on team dash.
+    candidate_ids: set[int]
+    if roster_ids is not None:
+        candidate_ids = set(roster_ids)
+        # Also include current-season dash players with meaningful minutes
+        for pid, row in by_id_primary.items():
+            if _f(row, "MIN") >= 5:
+                candidate_ids.add(pid)
+    else:
+        candidate_ids = set(by_id_primary.keys())
+
+    players: list[PlayerSeason] = []
+    current_usable = 0
+
+    for pid in candidate_ids:
+        row = by_id_primary.get(pid)
+        season_used = primary_season
+        reason = "current-season"
+        if row is not None and is_usable_player(_f(row, "GP"), _f(row, "MIN")):
+            current_usable += 1
+        else:
+            # Missing or thin current-season prior → try last season
+            fb = by_id_fallback_team.get(pid) or by_id_fallback_league.get(pid)
+            if fb is not None and is_usable_player(_f(fb, "GP"), _f(fb, "MIN")):
+                row = fb
+                season_used = fallback_season
+                reason = (
+                    "missing-current"
+                    if pid not in by_id_primary
+                    else "thin-current"
+                )
+            elif row is None:
+                continue
+            # else keep thin current row if present
+
+        assert row is not None
+        # Drop near-empty rows
+        if _f(row, "MIN") < 1.0 and _f(row, "GP") < 1:
             continue
-        p = _player_from_row(row, abbr)
-        if p.min < 1.0 and p.gp < 1:
+        # Soft roster filter for non-roster low-minute bodies
+        if (
+            roster_ids is not None
+            and pid not in roster_ids
+            and _f(row, "MIN") < 5
+            and season_used == primary_season
+        ):
             continue
-        p.pts = float(min(45.0, max(0.0, p.pts)))
-        p.reb = float(min(20.0, max(0.0, p.reb)))
-        p.ast = float(min(15.0, max(0.0, p.ast)))
-        p.min = float(min(42.0, max(0.0, p.min)))
-        p.fg_pct = float(min(0.75, max(0.0, p.fg_pct)))
-        p.fg3_pct = float(min(0.55, max(0.0, p.fg3_pct)))
+
+        p = _clip_player_rates(
+            _player_from_row(row, abbr, prior_season=season_used)
+        )
+        # Keep team_id as current team even if prior season was elsewhere
+        p.team_id = tid
+        p.team_abbr = abbr
         players.append(p)
+        provenance.record_player(
+            team_abbr=abbr,
+            player_id=p.player_id,
+            name=p.name,
+            season_used=season_used,
+            reason=reason,
+        )
 
     players.sort(key=lambda p: p.min, reverse=True)
+    usable = [p for p in players if is_usable_player(p.gp, p.min)]
+
+    # Whole-team fallback: still fewer than MIN_USABLE_PLAYERS → rebuild from
+    # previous season team dash (full prior season, no same-game leak).
+    if len(usable) < MIN_USABLE_PLAYERS and fallback_players is not None:
+        fb_players: list[PlayerSeason] = []
+        for pid, row in by_id_fallback_team.items():
+            if not is_usable_player(_f(row, "GP"), _f(row, "MIN")):
+                continue
+            p = _clip_player_rates(
+                _player_from_row(row, abbr, prior_season=fallback_season)
+            )
+            p.team_id = tid
+            p.team_abbr = abbr
+            fb_players.append(p)
+        fb_players.sort(key=lambda p: p.min, reverse=True)
+        if len(fb_players) >= MIN_USABLE_PLAYERS:
+            # Prefer merging: keep any current usable, fill rest from fallback
+            have = {p.player_id for p in usable}
+            merged = list(usable)
+            for p in fb_players:
+                if p.player_id in have:
+                    continue
+                merged.append(p)
+                provenance.record_player(
+                    team_abbr=abbr,
+                    player_id=p.player_id,
+                    name=p.name,
+                    season_used=fallback_season,
+                    reason="whole-team-fill",
+                )
+                have.add(p.player_id)
+            merged.sort(key=lambda p: p.min, reverse=True)
+            players = merged
+            provenance.team_notes[abbr] = (
+                f"thin current season ({current_usable} usable < "
+                f"{MIN_USABLE_PLAYERS}); filled from {fallback_season}"
+            )
+            if fallback_teams is not None and team_stats_season == primary_season:
+                # Prefer fallback advanced when whole-team player fill kicked in
+                # and current usable was very thin
+                if current_usable < MIN_USABLE_PLAYERS:
+                    pace, ortg, drtg = _team_advanced(tid, fallback_teams)
+                    team_stats_season = fallback_season
+        elif len(fb_players) > len(usable):
+            players = fb_players
+            provenance.team_notes[abbr] = (
+                f"whole-team fallback to {fallback_season} "
+                f"({len(fb_players)} players; current usable={current_usable})"
+            )
+            for p in players:
+                provenance.record_player(
+                    team_abbr=abbr,
+                    player_id=p.player_id,
+                    name=p.name,
+                    season_used=fallback_season,
+                    reason="whole-team-fallback",
+                )
+            if fallback_teams is not None:
+                pace, ortg, drtg = _team_advanced(tid, fallback_teams)
+                team_stats_season = fallback_season
+    else:
+        n_fb = sum(1 for p in players if p.prior_season == fallback_season)
+        if n_fb:
+            provenance.team_notes[abbr] = (
+                f"{current_usable} usable from {primary_season}; "
+                f"{n_fb} filled from {fallback_season}"
+            )
+        else:
+            provenance.team_notes[abbr] = (
+                f"all {len(players)} players from {primary_season}"
+            )
+
     return TeamSeason(
         team_id=tid,
         abbreviation=abbr,
@@ -280,6 +484,7 @@ def _build_team(
         off_rating=ortg,
         def_rating=drtg,
         players=players,
+        team_stats_season=team_stats_season,
     )
 
 
@@ -290,18 +495,20 @@ def _load_live(
     *,
     game_date: date | None,
     use_cache: bool,
+    allow_fallback: bool = True,
 ) -> MatchupData:
-    """Fetch live priors for exactly `season` (default 2026-27). No silent prior-season swap."""
+    """Fetch live priors for `season`, with optional previous-season fill."""
     cutoff = prior_cutoff(game_date)
     date_to = _date_to_param(cutoff)
+    fb_season = fallback_season_for(season)
     cache_key = (
-        f"matchup_{season}_{home['id']}_{away['id']}_"
+        f"matchup_{season}_fb{fb_season if allow_fallback else 'off'}_"
+        f"{home['id']}_{away['id']}_"
         f"asof_{cutoff.isoformat() if cutoff else 'latest'}"
     )
     cached = _read_cache(cache_key, use_cache)
     if cached:
         md = _matchup_from_dict(cached, source="cache")
-        # Reject stale wrong-season cache
         if md.season != season:
             print(f"  ignoring cache with season={md.season} (want {season})")
         else:
@@ -311,12 +518,35 @@ def _load_live(
     player_rows = _fetch_league_player_stats(season, date_to)
     team_rows = _fetch_league_team_stats(season, date_to)
 
-    if not player_rows:
+    fallback_player_rows: list[dict[str, Any]] | None = None
+    fallback_team_rows: list[dict[str, Any]] | None = None
+    # Early season often needs prior-year fill — fetch previous season full
+    # priors (no DateTo on prior season → complete prior year; still no
+    # same-game box score).
+    if allow_fallback:
+        print(f"  fetching fallback season {fb_season} priors (full season) ...")
+        try:
+            fallback_player_rows = _fetch_league_player_stats(fb_season, None)
+            fallback_team_rows = _fetch_league_team_stats(fb_season, None)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  fallback season warning: {exc}")
+            fallback_player_rows = None
+            fallback_team_rows = None
+            if not player_rows:
+                raise RuntimeError(
+                    f"No player rows for {season} and fallback {fb_season} failed."
+                ) from exc
+
+    if not player_rows and not fallback_player_rows:
         raise RuntimeError(
-            f"No player rows returned for season {season}. "
-            f"If the season has not started games yet, wait or pass --season explicitly. "
-            f"Default target is {CURRENT_SEASON}."
+            f"No player rows returned for season {season} (or fallback "
+            f"{fb_season}). Default target is {CURRENT_SEASON}."
         )
+
+    provenance = PriorProvenance(
+        season_primary=season,
+        season_fallback=fb_season,
+    )
 
     roster_home: set[int] | None = None
     roster_away: set[int] | None = None
@@ -325,22 +555,61 @@ def _load_live(
         roster_home = {int(r["PLAYER_ID"]) for r in rh}
     except Exception as exc:  # noqa: BLE001
         print(f"  roster home warning: {exc}")
-        roster_home = None
+        # Try previous-season roster as soft guide
+        if allow_fallback:
+            try:
+                rh = _fetch_roster(int(home["id"]), fb_season)
+                roster_home = {int(r["PLAYER_ID"]) for r in rh}
+                print(f"  using {fb_season} roster for home as guide")
+            except Exception as exc2:  # noqa: BLE001
+                print(f"  roster home fallback warning: {exc2}")
+                roster_home = None
     try:
         ra = _fetch_roster(int(away["id"]), season)
         roster_away = {int(r["PLAYER_ID"]) for r in ra}
     except Exception as exc:  # noqa: BLE001
         print(f"  roster away warning: {exc}")
-        roster_away = None
+        if allow_fallback:
+            try:
+                ra = _fetch_roster(int(away["id"]), fb_season)
+                roster_away = {int(r["PLAYER_ID"]) for r in ra}
+                print(f"  using {fb_season} roster for away as guide")
+            except Exception as exc2:  # noqa: BLE001
+                print(f"  roster away fallback warning: {exc2}")
+                roster_away = None
 
-    home_t = _build_team(home, player_rows, team_rows, roster_home)
-    away_t = _build_team(away, player_rows, team_rows, roster_away)
+    primary_players = player_rows or []
+    primary_teams = team_rows or []
 
-    if len(home_t.players) < 5 or len(away_t.players) < 5:
+    home_t = _build_team_with_fallback(
+        home,
+        primary_season=season,
+        fallback_season=fb_season,
+        primary_players=primary_players,
+        fallback_players=fallback_player_rows,
+        primary_teams=primary_teams,
+        fallback_teams=fallback_team_rows,
+        roster_ids=roster_home,
+        provenance=provenance,
+    )
+    away_t = _build_team_with_fallback(
+        away,
+        primary_season=season,
+        fallback_season=fb_season,
+        primary_players=primary_players,
+        fallback_players=fallback_player_rows,
+        primary_teams=primary_teams,
+        fallback_teams=fallback_team_rows,
+        roster_ids=roster_away,
+        provenance=provenance,
+    )
+
+    if len(home_t.players) < MIN_USABLE_PLAYERS or len(away_t.players) < MIN_USABLE_PLAYERS:
         raise RuntimeError(
             f"Insufficient players for {home_t.abbreviation} ({len(home_t.players)}) "
-            f"or {away_t.abbreviation} ({len(away_t.players)}) in live season {season}. "
-            f"Check network / season label (want {CURRENT_SEASON})."
+            f"or {away_t.abbreviation} ({len(away_t.players)}) after "
+            f"{season}/{fb_season} fallback. "
+            f"Threshold={MIN_USABLE_PLAYERS}."
         )
 
     md = MatchupData(
@@ -350,16 +619,27 @@ def _load_live(
         source="live",
         as_of=cutoff.isoformat() if cutoff else None,
         game_date=game_date.isoformat() if game_date else None,
+        provenance=provenance,
     )
     _write_cache(cache_key, _matchup_to_dict(md))
     print(
         f"  live OK: {home_t.abbreviation} n={len(home_t.players)} "
         f"{away_t.abbreviation} n={len(away_t.players)} season={season}"
     )
+    for line in provenance.summary_lines():
+        print(f"  prior: {line}")
     return md
 
 
 def _matchup_to_dict(md: MatchupData) -> dict[str, Any]:
+    prov = None
+    if md.provenance is not None:
+        prov = {
+            "season_primary": md.provenance.season_primary,
+            "season_fallback": md.provenance.season_fallback,
+            "players": md.provenance.players,
+            "team_notes": md.provenance.team_notes,
+        }
     return {
         "season": md.season,
         "source": md.source,
@@ -367,11 +647,21 @@ def _matchup_to_dict(md: MatchupData) -> dict[str, Any]:
         "game_date": md.game_date,
         "home": asdict(md.home),
         "away": asdict(md.away),
+        "provenance": prov,
+        "injuries_applied": md.injuries_applied,
+        "injury_notes": md.injury_notes,
     }
 
 
 def _team_from_dict(d: dict[str, Any]) -> TeamSeason:
-    players = [PlayerSeason(**p) for p in d.get("players", [])]
+    players = []
+    for p in d.get("players", []):
+        # Tolerate older cache without prior_season / injury fields
+        kwargs = dict(p)
+        kwargs.setdefault("prior_season", d.get("team_stats_season") or "")
+        kwargs.setdefault("injury_mult", 1.0)
+        kwargs.setdefault("injury_status", "")
+        players.append(PlayerSeason(**kwargs))
     return TeamSeason(
         team_id=int(d["team_id"]),
         abbreviation=d["abbreviation"],
@@ -380,10 +670,20 @@ def _team_from_dict(d: dict[str, Any]) -> TeamSeason:
         off_rating=float(d.get("off_rating", 112)),
         def_rating=float(d.get("def_rating", 112)),
         players=players,
+        team_stats_season=str(d.get("team_stats_season") or ""),
     )
 
 
 def _matchup_from_dict(d: dict[str, Any], source: str | None = None) -> MatchupData:
+    prov = None
+    raw = d.get("provenance")
+    if isinstance(raw, dict):
+        prov = PriorProvenance(
+            season_primary=raw.get("season_primary", d.get("season", "")),
+            season_fallback=raw.get("season_fallback", ""),
+            players=list(raw.get("players") or []),
+            team_notes=dict(raw.get("team_notes") or {}),
+        )
     return MatchupData(
         season=d["season"],
         home=_team_from_dict(d["home"]),
@@ -391,6 +691,9 @@ def _matchup_from_dict(d: dict[str, Any], source: str | None = None) -> MatchupD
         source=source or d.get("source", "cache"),
         as_of=d.get("as_of"),
         game_date=d.get("game_date"),
+        provenance=prov,
+        injuries_applied=bool(d.get("injuries_applied", False)),
+        injury_notes=list(d.get("injury_notes") or []),
     )
 
 
@@ -398,7 +701,32 @@ def load_fixture(path: Path | None = None) -> MatchupData:
     """Offline sample only — NOT accurate 2026-27 data. Requires --fixtures."""
     path = path or (FIXTURES_DIR / "sac_lac.json")
     data = json.loads(path.read_text())
-    return _matchup_from_dict(data, source="fixture")
+    md = _matchup_from_dict(data, source="fixture")
+    # Annotate fixture players with prior_season for reporting consistency
+    for side in (md.home, md.away):
+        side.team_stats_season = side.team_stats_season or md.season
+        for p in side.players:
+            if not p.prior_season:
+                p.prior_season = md.season
+    if md.provenance is None:
+        md.provenance = PriorProvenance(
+            season_primary=md.season,
+            season_fallback=fallback_season_for(md.season),
+            team_notes={
+                md.home.abbreviation: "fixture sample",
+                md.away.abbreviation: "fixture sample",
+            },
+        )
+        for side in (md.home, md.away):
+            for p in side.players:
+                md.provenance.record_player(
+                    team_abbr=side.abbreviation,
+                    player_id=p.player_id,
+                    name=p.name,
+                    season_used=p.prior_season or md.season,
+                    reason="fixture",
+                )
+    return md
 
 
 def load_matchup(
@@ -409,12 +737,15 @@ def load_matchup(
     game_date: date | None = None,
     use_cache: bool = True,
     force_fixtures: bool = False,
+    allow_fallback: bool = True,
 ) -> MatchupData:
     """
     Pull live roster/stats priors for the matchup.
 
-    Default: live NBA Stats for `season` (project default 2026-27).
-    Fixtures: ONLY if force_fixtures=True. Never silent fallback.
+    Default: live NBA Stats for `season` (project default 2026-27), with
+    previous-season fill when current usable players < MIN_USABLE_PLAYERS
+    or individual roster gaps exist.
+    Fixtures: ONLY if force_fixtures=True. Never silent fixture fallback.
     """
     if force_fixtures:
         print(
@@ -433,7 +764,12 @@ def load_matchup(
 
     try:
         return _load_live(
-            home, away, season, game_date=game_date, use_cache=use_cache
+            home,
+            away,
+            season,
+            game_date=game_date,
+            use_cache=use_cache,
+            allow_fallback=allow_fallback,
         )
     except Exception as exc:
         raise RuntimeError(

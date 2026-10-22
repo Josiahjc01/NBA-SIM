@@ -17,6 +17,7 @@ from collections.abc import Sequence
 import numpy as np
 
 from nba_sim.data import MatchupData, PlayerSeason, TeamSeason
+from nba_sim.lines import GameLines, LineProbabilities, compute_line_probs
 
 HOME_FG_BOOST = 0.015  # absolute; justified home-court shooting edge
 MIN_ROTATION = 8
@@ -76,6 +77,8 @@ class SimSummary:
     home_players: list[dict]
     away_players: list[dict]
     audit: dict = field(default_factory=dict)
+    mean_total: float = 0.0
+    line_probs: LineProbabilities | None = None
 
 
 @dataclass
@@ -378,6 +381,7 @@ def run_simulations(
     matchup: MatchupData,
     n: int = 5000,
     seed: int | None = None,
+    lines: GameLines | None = None,
 ) -> SimSummary:
     if n < 1:
         raise ValueError("n must be ≥ 1")
@@ -396,6 +400,15 @@ def run_simulations(
     # Consistency audit on a sample of games
     audit = _audit_batch(results[: min(200, n)], matchup)
 
+    line_probs = None
+    if lines is not None and (lines.spread is not None or lines.total is not None):
+        line_probs = compute_line_probs(
+            home_scores,
+            away_scores,
+            spread=lines.spread,
+            total=lines.total,
+        )
+
     return SimSummary(
         n=n,
         home_abbr=matchup.home.abbreviation,
@@ -411,6 +424,8 @@ def run_simulations(
         home_players=_aggregate_players(results, "home"),
         away_players=_aggregate_players(results, "away"),
         audit=audit,
+        mean_total=float((home_scores + away_scores).mean()),
+        line_probs=line_probs,
     )
 
 
