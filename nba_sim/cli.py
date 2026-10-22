@@ -31,10 +31,18 @@ def build_parser() -> argparse.ArgumentParser:
             f"Monte Carlo NBA game simulator. Default: LIVE {CURRENT_SEASON} "
             "priors from stats.nba.com with beginning-of-season blend "
             "(last season + preseason + rookie expected production → regular S2D). "
-            "Single game: --home/--away. Full day: --slate / --slate-date."
+            "Single game: --home/--away. Full day: --slate / --slate-date. "
+            "Connectivity: `python -m nba_sim doctor` or --check-data."
         ),
     )
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    p.add_argument(
+        "command",
+        nargs="?",
+        default=None,
+        choices=["doctor"],
+        help="Optional subcommand: `doctor` verifies live data sources.",
+    )
 
     mode = p.add_mutually_exclusive_group()
     mode.add_argument(
@@ -47,6 +55,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="YYYY-MM-DD",
         help="Simulate the full slate for this US/Eastern calendar date.",
+    )
+    p.add_argument(
+        "--check-data",
+        action="store_true",
+        help="Verify connectivity to each live data source (same as `doctor`) then exit.",
     )
 
     p.add_argument("--home", default=None, help="Home team name or abbreviation (e.g. SAC, Kings)")
@@ -217,6 +230,12 @@ def _run_one_matchup(
         allow_fallback=not args.no_fallback,
         fixture_path=args.fixture_file,
     )
+    if matchup.feed_notes:
+        fails = [n for n in matchup.feed_notes if "FAILED" in n or "unavailable" in n]
+        for n in fails[:10]:
+            _log(args, f"  feed: {n}")
+        if len(fails) > 10:
+            _log(args, f"  feed: … +{len(fails) - 10} more")
     _apply_injury_flags(matchup, args)
     if matchup.injury_notes:
         for n in matchup.injury_notes[:8]:
@@ -457,6 +476,12 @@ def _validate_args(args) -> int | None:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if getattr(args, "command", None) == "doctor" or getattr(args, "check_data", False):
+        from nba_sim.doctor import run_doctor
+
+        code, text = run_doctor(season=args.season, as_json=bool(args.json))
+        print(text)
+        return code
     bad = _validate_args(args)
     if bad is not None:
         return bad

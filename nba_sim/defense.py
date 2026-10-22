@@ -1,9 +1,11 @@
-"""Positional defense + hustle proxies (pre-tip only).
+"""Positional defense + hustle + PtDefend proxies (pre-tip only).
 
 Assumptions (documented, clipped):
 - Slot matchup: G↔G/F wing height, F↔F/C, C↔C rim height vs shooter slot.
 - Hustle: team DEFLECTIONS / CONTESTED_SHOTS (per game) raise opp TOV and
   mildly contest FG; missing hustle → no-op.
+- PtDefend: LeagueDashPtTeamDefend D_FG_PCT (Overall / 3PT / rim) vs league
+  → mild FG2/FG3 multipliers; missing → no-op.
 - Never uses same-game box scores.
 """
 
@@ -16,6 +18,10 @@ from nba_sim.priors import normalize_position
 
 LEAGUE_DEFLECTIONS_PG = 12.0
 LEAGUE_CONTESTED_PG = 45.0
+# League-ish defended FG% anchors (tracking era)
+LEAGUE_PT_DFG_OVERALL = 0.460
+LEAGUE_PT_DFG_THREE = 0.360
+LEAGUE_PT_DFG_RIM = 0.650
 
 
 @dataclass
@@ -137,6 +143,68 @@ def hustle_tov_multiplier(hustle: HustleProfile) -> float:
         return 1.0
     z = (float(hustle.deflections_pg) - LEAGUE_DEFLECTIONS_PG) / 4.0
     return max(0.97, min(1.06, 1.0 + 0.025 * max(-1.5, min(1.5, z))))
+
+
+@dataclass
+class PtDefendProfile:
+    """Team defended FG% from tracking (0 = unknown)."""
+
+    dfg_overall: float = 0.0
+    dfg_three: float = 0.0
+    dfg_rim: float = 0.0
+
+    @property
+    def available(self) -> bool:
+        return self.dfg_overall > 0 or self.dfg_three > 0 or self.dfg_rim > 0
+
+
+def parse_pt_defend_dfg(row: dict[str, Any]) -> float:
+    """Extract defended FG% from a LeagueDashPtTeamDefend row (0–1)."""
+    for key in ("D_FG_PCT", "DFG_PCT", "FG_PCT", "PCT"):
+        if key in row and row[key] is not None:
+            try:
+                v = float(row[key])
+            except (TypeError, ValueError):
+                continue
+            if v > 1.0:
+                v = v / 100.0
+            if 0.0 < v < 1.0:
+                return v
+    return 0.0
+
+
+def pt_defend_from_team(team: Any) -> PtDefendProfile:
+    return PtDefendProfile(
+        dfg_overall=float(getattr(team, "pt_dfg_overall", 0.0) or 0.0),
+        dfg_three=float(getattr(team, "pt_dfg_three", 0.0) or 0.0),
+        dfg_rim=float(getattr(team, "pt_dfg_rim", 0.0) or 0.0),
+    )
+
+
+def pt_defend_fg_multipliers(prof: PtDefendProfile) -> tuple[float, float]:
+    """
+    Return (fg2_mult, fg3_mult) for the *offense* facing this defense.
+
+    Lower D_FG_PCT than league ⇒ tougher D ⇒ mult < 1.
+    """
+    if not prof.available:
+        return 1.0, 1.0
+    fg2 = 1.0
+    fg3 = 1.0
+    if prof.dfg_rim > 0:
+        z = (prof.dfg_rim - LEAGUE_PT_DFG_RIM) / 0.04
+        # Offense makes more at rim vs soft rim D (high D_FG)
+        fg2 *= max(0.97, min(1.03, 1.0 + 0.012 * max(-1.5, min(1.5, z))))
+    elif prof.dfg_overall > 0:
+        z = (prof.dfg_overall - LEAGUE_PT_DFG_OVERALL) / 0.025
+        fg2 *= max(0.975, min(1.025, 1.0 + 0.010 * max(-1.5, min(1.5, z))))
+    if prof.dfg_three > 0:
+        z = (prof.dfg_three - LEAGUE_PT_DFG_THREE) / 0.025
+        fg3 *= max(0.97, min(1.03, 1.0 + 0.014 * max(-1.5, min(1.5, z))))
+    elif prof.dfg_overall > 0:
+        z = (prof.dfg_overall - LEAGUE_PT_DFG_OVERALL) / 0.025
+        fg3 *= max(0.98, min(1.02, 1.0 + 0.008 * max(-1.5, min(1.5, z))))
+    return fg2, fg3
 
 
 def parse_hustle_row(row: dict[str, Any]) -> HustleProfile:

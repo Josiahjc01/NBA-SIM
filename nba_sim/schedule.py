@@ -66,7 +66,12 @@ def fetch_slate(game_date: date) -> list[SlateGame]:
         )
         return ep.get_normalized_dict()
 
-    payload = with_retries(f"ScoreboardV2({date_str})", call)
+    payload = with_retries(
+        f"ScoreboardV2({date_str})",
+        call,
+        use_cache=True,
+        cache_key=f"ep_scoreboard_{date_str}",
+    )
     headers = payload.get("GameHeader") or []
     games: list[SlateGame] = []
     for row in headers:

@@ -21,7 +21,10 @@ from nba_sim.data import MatchupData, PlayerSeason, TeamSeason
 from nba_sim.lines import GameLines, LineProbabilities, compute_line_probs
 from nba_sim.statsutil import binomial_se, wilson_interval
 
-HOME_FG_BOOST = 0.015  # absolute; justified home-court shooting edge
+# ~2.5–3 pts modern HCA ≈ +1.4pp absolute FG on ~100 poss (FG-only; no pace bump).
+HOME_FG_BOOST = 0.014
+# Mild home TOV relief (road noise / travel); clipped in possession loop.
+HOME_TOV_MULT = 0.97
 MIN_ROTATION = 8
 MAX_ROTATION = 10
 MAX_ARCHETYPE_IN_ROTATION = 2  # pure expected-production rookies
@@ -69,7 +72,11 @@ def matchup_fingerprint(matchup: MatchupData) -> str:
         parts.append(
             f"ctx:{getattr(team, 'coach_name', '')}:"
             f"{getattr(team, 'three_par', 0.0):.3f}:"
-            f"{getattr(team, 'frontcourt_height_in', 0.0):.2f}"
+            f"{getattr(team, 'frontcourt_height_in', 0.0):.2f}:"
+            f"{getattr(team, 'pt_dfg_overall', 0.0):.4f}:"
+            f"{getattr(team, 'pt_dfg_three', 0.0):.4f}:"
+            f"{getattr(team, 'pt_dfg_rim', 0.0):.4f}:"
+            f"{getattr(team, 'deflections_pg', 0.0):.2f}"
         )
         for p in sorted(team.players, key=lambda x: x.player_id):
             parts.append(
@@ -249,6 +256,8 @@ def _build_context(
         hustle_contest_multiplier,
         hustle_tov_multiplier,
         positional_fg_multipliers,
+        pt_defend_fg_multipliers,
+        pt_defend_from_team,
     )
 
     rot = _rotation(team)
@@ -346,6 +355,10 @@ def _build_context(
         opp_tov_mult *= hustle_tov_multiplier(opp_hustle)
         opp_contest = hustle_contest_multiplier(opp_hustle)
 
+    pt_fg2 = pt_fg3 = 1.0
+    if opp_team is not None:
+        pt_fg2, pt_fg3 = pt_defend_fg_multipliers(pt_defend_from_team(opp_team))
+
     fg2, fg3, three_rate, ft = [], [], [], []
     tov_num = tov_den = 0.0
     oreb_num = oreb_den = 0.0
@@ -366,12 +379,12 @@ def _build_context(
                 p, float(getattr(p, "height_in", 0.0) or 0.0), opp_pos_def
             )
         fg2_p = _clip(
-            fg2_p * shot_adj * fg2_size * ts_mult * pos_fg2 * opp_contest,
+            fg2_p * shot_adj * fg2_size * ts_mult * pos_fg2 * opp_contest * pt_fg2,
             FG_FLOOR,
             FG_CEIL,
         )
         g3 = _clip(
-            g3 * shot_adj * ts_mult * pos_fg3 * opp_contest,
+            g3 * shot_adj * ts_mult * pos_fg3 * opp_contest * pt_fg3,
             FG3_FLOOR,
             FG3_CEIL,
         )
@@ -451,11 +464,13 @@ def _run_possessions(
     """Simulate n_poss for offense; return points scored. Mutates lines."""
     points = 0
     fg_boost = HOME_FG_BOOST if home_offense else 0.0
+    tov_rate = offense.tov_rate * (HOME_TOV_MULT if home_offense else 1.0)
+    tov_rate = _clip(tov_rate, TOV_RATE_FLOOR, TOV_RATE_CEIL)
     i = 0
     while i < n_poss:
         i += 1
         # Turnover ends possession
-        if rng.random() < offense.tov_rate:
+        if rng.random() < tov_rate:
             idx = _pick(rng, offense.usage)
             offense.lines[idx].tov += 1
             continue
@@ -744,13 +759,16 @@ def _audit_batch(results: Sequence[GameResult], matchup: MatchupData) -> dict:
         "mean_team_minutes": float(np.mean(min_totals)) if min_totals else 0.0,
         "negative_stat_events": neg,
         "mean_poss_proxy_minus_allotment": float(np.mean(poss_proxy_err)) if poss_proxy_err else 0.0,
-        "home_court_mechanism": f"+{HOME_FG_BOOST:.3f} absolute FG for home only",
+        "home_court_mechanism": (
+            f"+{HOME_FG_BOOST:.3f} absolute FG home; TOV×{HOME_TOV_MULT:.2f} home"
+        ),
         "pace_mechanism": "single game pace = avg(team paces); player rates are shares",
         "drtg_mechanism": "FG/3P × clip(opp_DRtg/league, 0.94, 1.06); higher DRtg (worse D) boosts offense",
         "ortg_mechanism": "team ORtg not re-applied to FG (already in player rates; avoids double-count)",
         "matchup_context": (
-            "heights + positional slot D, hustle (deflections/contested), "
-            "USG%/TS%, coach style (pace/3PAR/DRtg), B2B/travel rest"
+            "heights + positional slot D, PtDefend (rim/3PT D_FG), hustle "
+            "(deflections/contested), USG%/TS%, coach style (pace/3PAR/DRtg), "
+            "B2B/travel rest"
         ),
         "tie_break": f"up to {MAX_OT_PERIODS} OT periods ({OT_POSSESSIONS} poss/side); then +1 coin-flip",
         "data_note": f"priors from matchup source={matchup.source} season={matchup.season}",

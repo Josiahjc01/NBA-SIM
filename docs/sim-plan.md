@@ -49,9 +49,10 @@ For N simulations (per game):
 | Team pace / ORtg / DRtg | `LeagueDashTeamStats` (`Advanced`) |
 | Player advanced | `LeagueDashPlayerStats` (`Advanced`) — USG/TS/eFG |
 | Hustle | `LeagueHustleStatsTeam` — deflections / contested |
+| PtDefend | `LeagueDashPtTeamDefend` — Overall / 3PT / Less Than 6Ft |
 | Heights / position | `CommonTeamRoster` |
 | Daily slate | `ScoreboardV2` (schedule only) |
-| Injuries (live default on) | ESPN site API (unofficial) or `--injuries-csv` |
+| Injuries (live default on) | ESPN site API (+ core fallback) or `--injuries-csv` |
 
 ### Pre-tip cutoff (anti-leak)
 
@@ -89,9 +90,12 @@ At GP_reg≈0 a veteran is ~last (+ pre if available). A rookie is ~archetype + 
 
 ### Rate limits & caching
 
-- On-disk cache: `.cache/`, key includes season, fallback flag, teams, and `asof_*` (TTL ~6h).
-- ~0.8s pause between live calls.
+- Matchup cache: `.cache/`, schema `blendv6`, key includes season, fallback flag, teams, `asof_*` (TTL ~6h).
+- Endpoint cache: `.cache/endpoints/` (sha keys; same TTL). `--no-cache` bypasses both.
+- Parallel waves (required base → blend/rosters → optional enrichment) with `NBA_SIM_MAX_WORKERS`.
+- Pause + jitter before each live call (`NBA_SIM_PAUSE`, default 0.55s); hard retries via `NBA_SIM_RETRIES`.
 - Optional offline only: `--fixtures` → `nba_sim/fixtures/sac_lac.json` (outdated; bannered). **Not** used on live failure.
+- Connectivity: `python -m nba_sim doctor` / `--check-data`.
 
 ## Simulation model
 
@@ -103,13 +107,14 @@ Possession Monte Carlo (not independent Normal team scores).
 2. **Rotation:** top 8–10 by evidence minutes (cap archetype rookies); team minutes → **240**.
 3. **Usage:** blend `FGA×√MIN` with USG% when available; mild concentration; archetype down-weight.
 4. **Possession outcomes:** TOV → else shot (2/3 by player 3PA rate) → make/miss; assists on ~65% of makes; OREB can extend possession; DREB to defense.
-5. **Home court:** `+1.5%` absolute FG only (no home pace bump).
+5. **Home court:** `+1.4%` absolute FG + TOV×0.97 home (no home pace bump).
 6. **Opponent adj:** FG/3P × `(opp_DRtg / league)` once, clipped to `[0.94, 1.06]`.
 7. **Positional D + size:** slot height mismatch (G/F/C) and frontcourt size → mild 2P/3P/OREB.
-8. **Hustle:** opp deflections → TOV mult; contested shots → FG contest (no-op if missing).
-9. **Coach style:** derived from pace/3PAR/DRtg → three tilt + defensive TOV pressure.
-10. **B2B / travel:** tip date set → yesterday slate; road B2B / 3-in-4 stronger FG+pace haircut. `--no-rest` disables.
-11. **OT:** up to 3× (12 possessions each); then +1 coin-flip.
+8. **PtDefend:** opp rim/3PT/overall D_FG vs league → FG2/FG3 (no-op if missing).
+9. **Hustle:** opp deflections → TOV mult; contested shots → FG contest (no-op if missing).
+10. **Coach style:** derived from pace/3PAR/DRtg → three tilt + defensive TOV pressure.
+11. **B2B / travel:** tip date set → yesterday slate; road B2B / 3-in-4 stronger FG+pace haircut. `--no-rest` disables.
+12. **OT:** up to 3× (12 possessions each); then +1 coin-flip.
 
 ### Betting line math (when provided)
 
@@ -133,6 +138,6 @@ Full leak/bias/consistency checklist: [realism-audit.md](./realism-audit.md).
 ## Follow-ups
 
 1. Official NBA injury/inactive report when a stable public source is available.
-2. `LeagueDashPtDefend` / season matchups for shot-location defense.
+2. Player-level `LeagueDashPtDefend` (beyond team aggregates).
 3. Live closing lines feed (optional).
-4. Home FG boost magnitude tuning vs market.
+4. Further home FG boost calibration vs market.

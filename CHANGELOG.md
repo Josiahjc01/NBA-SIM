@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.1
+- Live data reliability: parallel fetch waves, endpoint cache (`.cache/endpoints/`),
+  Chrome-like NBA Stats headers, env tunables (`NBA_SIM_TIMEOUT/RETRIES/PAUSE/CACHE_TTL/MAX_WORKERS`)
+- Optional feeds (advanced / hustle / PtDefend / coaches) degrade with loud `feed_notes`;
+  required feeds retry hard then fail with actionable errors + `doctor` tips
+- `python -m nba_sim doctor` / `--check-data` connectivity probe
+- Model: `LeagueDashPtTeamDefend` shot-location D (rim/3PT/overall); home FG +1.4pp + home TOV×0.97
+- Injuries: ESPN site primary + core API fallback; cached with retries
+- Cache schema `blendv6`
+
 ## 0.4.0
 - Positional defense: G/F/C slot heights → contest/finish multipliers
 - Hustle proxies: `LeagueHustleStatsTeam` deflections → TOV; contested → FG

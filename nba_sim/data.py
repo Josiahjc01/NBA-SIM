@@ -33,12 +33,19 @@ from nba_sim.priors import (
     parse_roster_meta,
     rookie_prior_row,
 )
-from nba_sim.httputil import endpoint_kwargs, with_retries
+from nba_sim.httputil import (
+    endpoint_kwargs,
+    parallel_map,
+    soft_fetch,
+    with_retries,
+)
 from nba_sim.season import CURRENT_SEASON
 
 CACHE_DIR = Path(__file__).resolve().parents[1] / ".cache"
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 CACHE_TTL_SECONDS = 6 * 60 * 60  # shorter so live S2D stays fresh
+# Matchup aggregate cache schema — bump when TeamSeason / blend inputs change.
+MATCHUP_CACHE_SCHEMA = "blendv6"
 
 # When True, suppress informational prints (warnings for hard failures still raise).
 _QUIET = False
@@ -117,6 +124,10 @@ class TeamSeason:
     # Hustle (per game); 0 = unknown
     deflections_pg: float = 0.0
     contested_shots_pg: float = 0.0
+    # PtDefend / shot-location D (defended FG%); 0 = unknown → model no-op
+    pt_dfg_overall: float = 0.0
+    pt_dfg_three: float = 0.0
+    pt_dfg_rim: float = 0.0  # Less Than 6Ft
 
 
 @dataclass
@@ -132,6 +143,8 @@ class MatchupData:
     injury_notes: list[str] = field(default_factory=list)
     rest_notes: list[str] = field(default_factory=list)
     matchup_notes: list[str] = field(default_factory=list)
+    # Loud provenance for optional feeds (hustle / advanced / PtDefend / coaches)
+    feed_notes: list[str] = field(default_factory=list)
 
 
 def _cache_path(key: str) -> Path:
@@ -198,8 +211,12 @@ def _fetch_league_player_stats(
     date_to: str | None,
     *,
     season_type: str = "Regular Season",
+    use_cache: bool = True,
 ) -> list[dict[str, Any]]:
     from nba_api.stats.endpoints import leaguedashplayerstats
+
+    label = f"LeagueDashPlayerStats({season},{season_type},to={date_to or 'latest'})"
+    cache_key = f"ep_player_{season}_{season_type}_{date_to or 'latest'}"
 
     def call():
         kwargs: dict[str, Any] = endpoint_kwargs(
@@ -215,7 +232,7 @@ def _fetch_league_player_stats(
         ep = leaguedashplayerstats.LeagueDashPlayerStats(**kwargs)
         return ep.get_normalized_dict()["LeagueDashPlayerStats"]
 
-    return with_retries(f"LeagueDashPlayerStats({season},{season_type})", call)
+    return with_retries(label, call, use_cache=use_cache, cache_key=cache_key)
 
 
 def _fetch_league_team_stats(
@@ -223,8 +240,12 @@ def _fetch_league_team_stats(
     date_to: str | None,
     *,
     season_type: str = "Regular Season",
+    use_cache: bool = True,
 ) -> list[dict[str, Any]]:
     from nba_api.stats.endpoints import leaguedashteamstats
+
+    label = f"LeagueDashTeamStats({season},{season_type},to={date_to or 'latest'})"
+    cache_key = f"ep_team_{season}_{season_type}_{date_to or 'latest'}"
 
     def call():
         kwargs: dict[str, Any] = endpoint_kwargs(
@@ -240,7 +261,7 @@ def _fetch_league_team_stats(
         ep = leaguedashteamstats.LeagueDashTeamStats(**kwargs)
         return ep.get_normalized_dict()["LeagueDashTeamStats"]
 
-    return with_retries(f"LeagueDashTeamStats({season},{season_type})", call)
+    return with_retries(label, call, use_cache=use_cache, cache_key=cache_key)
 
 
 def _fetch_league_player_advanced(
@@ -248,9 +269,13 @@ def _fetch_league_player_advanced(
     date_to: str | None,
     *,
     season_type: str = "Regular Season",
+    use_cache: bool = True,
 ) -> list[dict[str, Any]]:
     """USG%/TS%/eFG% etc. MeasureType=Advanced on LeagueDashPlayerStats."""
     from nba_api.stats.endpoints import leaguedashplayerstats
+
+    label = f"LeagueDashPlayerStats.Advanced({season},{season_type},to={date_to or 'latest'})"
+    cache_key = f"ep_player_adv_{season}_{season_type}_{date_to or 'latest'}"
 
     def call():
         kwargs: dict[str, Any] = endpoint_kwargs(
@@ -266,13 +291,16 @@ def _fetch_league_player_advanced(
         ep = leaguedashplayerstats.LeagueDashPlayerStats(**kwargs)
         return ep.get_normalized_dict()["LeagueDashPlayerStats"]
 
-    return with_retries(
-        f"LeagueDashPlayerStats.Advanced({season},{season_type})", call
-    )
+    return with_retries(label, call, use_cache=use_cache, cache_key=cache_key)
 
 
-def _fetch_roster(team_id: int, season: str) -> list[dict[str, Any]]:
+def _fetch_roster(
+    team_id: int, season: str, *, use_cache: bool = True
+) -> list[dict[str, Any]]:
     from nba_api.stats.endpoints import commonteamroster
+
+    label = f"CommonTeamRoster({team_id},{season})"
+    cache_key = f"ep_roster_{team_id}_{season}"
 
     def call():
         ep = commonteamroster.CommonTeamRoster(
@@ -280,12 +308,17 @@ def _fetch_roster(team_id: int, season: str) -> list[dict[str, Any]]:
         )
         return ep.get_normalized_dict()["CommonTeamRoster"]
 
-    return with_retries(f"CommonTeamRoster({team_id},{season})", call)
+    return with_retries(label, call, use_cache=use_cache, cache_key=cache_key)
 
 
-def _fetch_coach_name(team_id: int, season: str) -> str:
+def _fetch_coach_name(
+    team_id: int, season: str, *, use_cache: bool = True
+) -> str:
     """Best-effort head coach from TeamInfoCommon (empty string on failure)."""
     from nba_api.stats.endpoints import teaminfocommon
+
+    label = f"TeamInfoCommon.coach({team_id},{season})"
+    cache_key = f"ep_coach_{team_id}_{season}"
 
     def call():
         ep = teaminfocommon.TeamInfoCommon(
@@ -305,11 +338,13 @@ def _fetch_coach_name(team_id: int, season: str) -> str:
                     return str(row[ck]).strip()
         return ""
 
-    try:
-        return with_retries(f"TeamInfoCommon.coach({team_id},{season})", call) or ""
-    except Exception as exc:  # noqa: BLE001
-        _say(f"  coach fetch warning ({team_id}): {exc}")
+    val, err = soft_fetch(
+        label, call, retries=2, use_cache=use_cache, cache_key=cache_key, default=""
+    )
+    if err:
+        _say(f"  coach fetch warning ({team_id}): {err}")
         return ""
+    return val or ""
 
 
 def _fetch_team_hustle(
@@ -317,9 +352,13 @@ def _fetch_team_hustle(
     date_to: str | None,
     *,
     season_type: str = "Regular Season",
+    use_cache: bool = True,
 ) -> list[dict[str, Any]]:
     """LeagueHustleStatsTeam — deflections / contested shots (pre-tip DateTo)."""
     from nba_api.stats.endpoints import leaguehustlestatsteam
+
+    label = f"LeagueHustleStatsTeam({season},to={date_to or 'latest'})"
+    cache_key = f"ep_hustle_{season}_{season_type}_{date_to or 'latest'}"
 
     def call():
         kwargs: dict[str, Any] = endpoint_kwargs(
@@ -342,7 +381,52 @@ def _fetch_team_hustle(
                 return v
         return []
 
-    return with_retries(f"LeagueHustleStatsTeam({season})", call)
+    return with_retries(label, call, use_cache=use_cache, cache_key=cache_key)
+
+
+def _fetch_pt_team_defend(
+    season: str,
+    date_to: str | None,
+    *,
+    defense_category: str = "Overall",
+    use_cache: bool = True,
+) -> list[dict[str, Any]]:
+    """LeagueDashPtTeamDefend — defended FG% by shot category (optional feed)."""
+    from nba_api.stats.endpoints import leaguedashptteamdefend
+
+    label = (
+        f"LeagueDashPtTeamDefend({season},{defense_category},"
+        f"to={date_to or 'latest'})"
+    )
+    safe_cat = defense_category.replace(" ", "_")
+    cache_key = f"ep_ptdefend_{season}_{safe_cat}_{date_to or 'latest'}"
+
+    def call():
+        kwargs: dict[str, Any] = endpoint_kwargs(
+            {
+                "season": season,
+                "defense_category": defense_category,
+                "per_mode_simple": "PerGame",
+                "season_type_all_star": "Regular Season",
+            }
+        )
+        if date_to:
+            kwargs["date_to_nullable"] = date_to
+        ep = leaguedashptteamdefend.LeagueDashPtTeamDefend(**kwargs)
+        data = ep.get_normalized_dict()
+        for key in (
+            "LeagueDashPtTeamDefend",
+            "LeagueDashPTTeamDefend",
+            "TeamDefend",
+        ):
+            if data.get(key):
+                return data[key]
+        for v in data.values():
+            if isinstance(v, list) and v:
+                return v
+        return []
+
+    return with_retries(label, call, use_cache=use_cache, cache_key=cache_key)
 
 
 def _attach_team_hustle(
@@ -364,6 +448,34 @@ def _attach_team_hustle(
         team.deflections_pg = float(prof.deflections_pg)
         team.contested_shots_pg = float(prof.contested_pg)
         return
+
+
+def _attach_pt_defend(
+    team: TeamSeason,
+    *,
+    overall: list[dict[str, Any]] | None,
+    threes: list[dict[str, Any]] | None,
+    rim: list[dict[str, Any]] | None,
+) -> None:
+    """Merge LeagueDashPtTeamDefend D_FG_PCT onto team (in-place)."""
+    from nba_sim.defense import parse_pt_defend_dfg
+
+    tid = int(team.team_id)
+
+    def _pick(rows: list[dict[str, Any]] | None) -> float:
+        if not rows:
+            return 0.0
+        for row in rows:
+            try:
+                if int(row.get("TEAM_ID") or 0) == tid:
+                    return parse_pt_defend_dfg(row)
+            except (TypeError, ValueError):
+                continue
+        return 0.0
+
+    team.pt_dfg_overall = _pick(overall)
+    team.pt_dfg_three = _pick(threes)
+    team.pt_dfg_rim = _pick(rim)
 
 
 def _fetch_draft_picks(season: str) -> dict[int, int]:
@@ -935,6 +1047,20 @@ def _attach_player_advanced(
             p.efg_pct = efg if efg <= 1.0 else efg / 100.0
 
 
+def _unwrap_parallel(result: Any, label: str, *, required: bool) -> Any:
+    """Raise actionable errors for required feeds; return None for optional fails."""
+    if isinstance(result, Exception):
+        if required:
+            raise RuntimeError(
+                f"Required feed '{label}' failed: {result}\n"
+                f"Tips: retry later; raise NBA_SIM_TIMEOUT (default 90); "
+                f"check `python -m nba_sim doctor`; ensure HTTPS to stats.nba.com; "
+                f"or pass --fixtures ONLY for offline smoke."
+            ) from result
+        return None
+    return result
+
+
 def _load_live(
     home: dict[str, Any],
     away: dict[str, Any],
@@ -949,7 +1075,8 @@ def _load_live(
     date_to = _date_to_param(cutoff)
     fb_season = fallback_season_for(season)
     cache_key = (
-        f"matchup_blendv5_{season}_fb{fb_season if allow_fallback else 'off'}_"
+        f"matchup_{MATCHUP_CACHE_SCHEMA}_{season}_"
+        f"fb{fb_season if allow_fallback else 'off'}_"
         f"{home['id']}_{away['id']}_"
         f"asof_{cutoff.isoformat() if cutoff else 'latest'}"
     )
@@ -961,46 +1088,143 @@ def _load_live(
         else:
             return md
 
+    feed_notes: list[str] = []
     _say(
         f"  fetching live NBA Stats for season {season} "
-        f"(regular + preseason + last-season blend) ..."
+        f"(parallel waves; regular + preseason + last-season blend) ..."
     )
-    player_rows = _fetch_league_player_stats(season, date_to)
-    team_rows = _fetch_league_team_stats(season, date_to)
+
+    # --- Wave 1: required base stats (hard retry) ---
+    w1 = parallel_map(
+        [
+            (
+                "player_cur",
+                lambda: _fetch_league_player_stats(
+                    season, date_to, use_cache=use_cache
+                ),
+            ),
+            (
+                "team_cur",
+                lambda: _fetch_league_team_stats(
+                    season, date_to, use_cache=use_cache
+                ),
+            ),
+        ]
+    )
+    player_rows = _unwrap_parallel(w1.get("player_cur"), "player stats", required=True)
+    team_rows = _unwrap_parallel(w1.get("team_cur"), "team advanced", required=True)
+    if not player_rows:
+        feed_notes.append(f"player stats {season}: empty (will blend last/pre)")
+    else:
+        feed_notes.append(f"player stats {season}: OK ({len(player_rows)} rows)")
+    if team_rows:
+        feed_notes.append(f"team advanced {season}: OK ({len(team_rows)} rows)")
+    else:
+        feed_notes.append(f"team advanced {season}: empty")
 
     fallback_player_rows: list[dict[str, Any]] | None = None
     fallback_team_rows: list[dict[str, Any]] | None = None
     preseason_player_rows: list[dict[str, Any]] | None = None
+    draft_picks: dict[int, int] = {}
 
-    # Beginning of season: always pull last season (full) + current preseason.
+    # --- Wave 2: blend inputs + rosters (parallel; soft where safe) ---
     if allow_fallback:
-        _say(f"  fetching last season {fb_season} priors (full regular season) ...")
-        try:
-            fallback_player_rows = _fetch_league_player_stats(fb_season, None)
-            fallback_team_rows = _fetch_league_team_stats(fb_season, None)
-        except Exception as exc:  # noqa: BLE001
-            _say(f"  last-season warning: {exc}")
-            fallback_player_rows = None
-            fallback_team_rows = None
+        _say(
+            f"  wave2: last season {fb_season} + preseason + draft + rosters ..."
+        )
+        w2_jobs: list[tuple[str, Any]] = [
+            (
+                "player_fb",
+                lambda: _fetch_league_player_stats(
+                    fb_season, None, use_cache=use_cache
+                ),
+            ),
+            (
+                "team_fb",
+                lambda: _fetch_league_team_stats(
+                    fb_season, None, use_cache=use_cache
+                ),
+            ),
+            (
+                "player_pre",
+                lambda: _fetch_league_player_stats(
+                    season, None, season_type="Pre Season", use_cache=use_cache
+                ),
+            ),
+            ("draft", lambda: _fetch_draft_picks(season)),
+            (
+                "roster_home",
+                lambda: _fetch_roster(int(home["id"]), season, use_cache=use_cache),
+            ),
+            (
+                "roster_away",
+                lambda: _fetch_roster(int(away["id"]), season, use_cache=use_cache),
+            ),
+        ]
+        w2 = parallel_map(w2_jobs)
+
+        fb_p = w2.get("player_fb")
+        fb_t = w2.get("team_fb")
+        if isinstance(fb_p, Exception) or isinstance(fb_t, Exception):
+            err = fb_p if isinstance(fb_p, Exception) else fb_t
+            feed_notes.append(f"last-season {fb_season}: FAILED ({err})")
             if not player_rows:
                 raise RuntimeError(
-                    f"No player rows for {season} and last season {fb_season} failed."
-                ) from exc
-
-        _say(f"  fetching {season} Pre Season player priors ...")
-        try:
-            preseason_player_rows = _fetch_league_player_stats(
-                season, None, season_type="Pre Season"
+                    f"No player rows for {season} and last season {fb_season} "
+                    f"failed: {err}\n"
+                    f"Run `python -m nba_sim doctor` and retry."
+                ) from err  # type: ignore[misc]
+            fallback_player_rows = None
+            fallback_team_rows = None
+        else:
+            fallback_player_rows = fb_p or None
+            fallback_team_rows = fb_t or None
+            feed_notes.append(
+                f"last-season {fb_season}: OK "
+                f"(players={len(fallback_player_rows or [])}, "
+                f"teams={len(fallback_team_rows or [])})"
             )
-            _say(f"  preseason rows: {len(preseason_player_rows)}")
-        except Exception as exc:  # noqa: BLE001
-            _say(f"  preseason warning: {exc}")
+
+        pre = w2.get("player_pre")
+        if isinstance(pre, Exception):
+            feed_notes.append(f"preseason {season}: FAILED ({pre}) — continuing")
             preseason_player_rows = None
+        else:
+            preseason_player_rows = pre or None
+            n_pre = len(preseason_player_rows or [])
+            feed_notes.append(f"preseason {season}: OK ({n_pre} rows)")
+            _say(f"  preseason rows: {n_pre}")
+
+        dr = w2.get("draft")
+        if isinstance(dr, Exception):
+            feed_notes.append(f"draft picks: FAILED ({dr}) — rookies unscaled")
+            draft_picks = {}
+        else:
+            draft_picks = dr or {}
+            feed_notes.append(f"draft picks: OK ({len(draft_picks)} ids)")
+    else:
+        w2 = parallel_map(
+            [
+                (
+                    "roster_home",
+                    lambda: _fetch_roster(
+                        int(home["id"]), season, use_cache=use_cache
+                    ),
+                ),
+                (
+                    "roster_away",
+                    lambda: _fetch_roster(
+                        int(away["id"]), season, use_cache=use_cache
+                    ),
+                ),
+            ]
+        )
 
     if not player_rows and not fallback_player_rows and not preseason_player_rows:
         raise RuntimeError(
             f"No player rows returned for season {season} (or last season "
-            f"{fb_season} / preseason). Default target is {CURRENT_SEASON}."
+            f"{fb_season} / preseason). Default target is {CURRENT_SEASON}.\n"
+            f"Run `python -m nba_sim doctor` to verify connectivity."
         )
 
     provenance = PriorProvenance(
@@ -1008,44 +1232,41 @@ def _load_live(
         season_fallback=fb_season,
     )
 
-    roster_home: set[int] | None = None
-    roster_away: set[int] | None = None
-    meta_home: dict[int, RosterMeta] = {}
-    meta_away: dict[int, RosterMeta] = {}
-    draft_picks: dict[int, int] = {}
-    if allow_fallback:
-        draft_picks = _fetch_draft_picks(season)
+    def _resolve_roster(
+        side: str, team_info: dict[str, Any], raw: Any
+    ) -> tuple[set[int] | None, dict[int, RosterMeta]]:
+        if isinstance(raw, Exception):
+            _say(f"  roster {side} warning: {raw}")
+            feed_notes.append(f"roster {side} {season}: FAILED ({raw})")
+            if allow_fallback:
+                try:
+                    rows = _fetch_roster(
+                        int(team_info["id"]), fb_season, use_cache=use_cache
+                    )
+                    feed_notes.append(
+                        f"roster {side}: using {fb_season} ({len(rows)} players)"
+                    )
+                    _say(f"  using {fb_season} roster for {side} as guide")
+                    return {int(r["PLAYER_ID"]) for r in rows}, parse_roster_meta(rows)
+                except Exception as exc2:  # noqa: BLE001
+                    feed_notes.append(
+                        f"roster {side} {fb_season}: FAILED ({exc2})"
+                    )
+                    _say(f"  roster {side} fallback warning: {exc2}")
+                    return None, {}
+            return None, {}
+        rows = raw or []
+        feed_notes.append(f"roster {side} {season}: OK ({len(rows)} players)")
+        return {int(r["PLAYER_ID"]) for r in rows}, parse_roster_meta(rows)
 
-    try:
-        rh = _fetch_roster(int(home["id"]), season)
-        roster_home = {int(r["PLAYER_ID"]) for r in rh}
-        meta_home = parse_roster_meta(rh)
-    except Exception as exc:  # noqa: BLE001
-        _say(f"  roster home warning: {exc}")
-        if allow_fallback:
-            try:
-                rh = _fetch_roster(int(home["id"]), fb_season)
-                roster_home = {int(r["PLAYER_ID"]) for r in rh}
-                meta_home = parse_roster_meta(rh)
-                _say(f"  using {fb_season} roster for home as guide")
-            except Exception as exc2:  # noqa: BLE001
-                _say(f"  roster home fallback warning: {exc2}")
-                roster_home = None
-    try:
-        ra = _fetch_roster(int(away["id"]), season)
-        roster_away = {int(r["PLAYER_ID"]) for r in ra}
-        meta_away = parse_roster_meta(ra)
-    except Exception as exc:  # noqa: BLE001
-        _say(f"  roster away warning: {exc}")
-        if allow_fallback:
-            try:
-                ra = _fetch_roster(int(away["id"]), fb_season)
-                roster_away = {int(r["PLAYER_ID"]) for r in ra}
-                meta_away = parse_roster_meta(ra)
-                _say(f"  using {fb_season} roster for away as guide")
-            except Exception as exc2:  # noqa: BLE001
-                _say(f"  roster away fallback warning: {exc2}")
-                roster_away = None
+    roster_home, meta_home = _resolve_roster("home", home, w2.get("roster_home"))
+    roster_away, meta_away = _resolve_roster("away", away, w2.get("roster_away"))
+
+    if roster_home is None and roster_away is None:
+        raise RuntimeError(
+            f"Required rosters failed for both {home.get('abbreviation')} and "
+            f"{away.get('abbreviation')}. Retry or run `python -m nba_sim doctor`."
+        )
 
     for meta in list(meta_home.values()) + list(meta_away.values()):
         if meta.player_id in draft_picks:
@@ -1091,51 +1312,205 @@ def _load_live(
             f"Threshold={MIN_USABLE_PLAYERS}."
         )
 
-    # Player advanced (USG/TS/eFG): prefer current season, else last season.
-    adv_rows: list[dict[str, Any]] | None = None
-    try:
-        _say(f"  fetching player advanced rates ({season}) ...")
-        adv_rows = _fetch_league_player_advanced(season, date_to)
-    except Exception as exc:  # noqa: BLE001
-        _say(f"  advanced current warning: {exc}")
-        adv_rows = None
-    if not adv_rows and allow_fallback and fallback_player_rows is not None:
-        try:
-            _say(f"  fetching player advanced rates ({fb_season}) ...")
-            adv_rows = _fetch_league_player_advanced(fb_season, None)
-        except Exception as exc:  # noqa: BLE001
-            _say(f"  advanced last-season warning: {exc}")
+    # --- Wave 3: optional enrichment (soft; never abort the matchup) ---
+    _say("  wave3: optional advanced / hustle / PtDefend / coaches ...")
+    opt_jobs: list[tuple[str, Any]] = [
+        (
+            "adv_cur",
+            lambda: soft_fetch(
+                f"player advanced {season}",
+                lambda: _fetch_league_player_advanced(
+                    season, date_to, use_cache=use_cache
+                ),
+                retries=2,
+                use_cache=False,
+            ),
+        ),
+        (
+            "hustle_cur",
+            lambda: soft_fetch(
+                f"hustle {season}",
+                lambda: _fetch_team_hustle(season, date_to, use_cache=use_cache),
+                retries=2,
+                use_cache=False,
+            ),
+        ),
+        (
+            "pt_overall",
+            lambda: soft_fetch(
+                f"PtDefend Overall {season}",
+                lambda: _fetch_pt_team_defend(
+                    season, date_to, defense_category="Overall", use_cache=use_cache
+                ),
+                retries=2,
+                use_cache=False,
+            ),
+        ),
+        (
+            "pt_three",
+            lambda: soft_fetch(
+                f"PtDefend 3PT {season}",
+                lambda: _fetch_pt_team_defend(
+                    season,
+                    date_to,
+                    defense_category="3 Pointers",
+                    use_cache=use_cache,
+                ),
+                retries=2,
+                use_cache=False,
+            ),
+        ),
+        (
+            "pt_rim",
+            lambda: soft_fetch(
+                f"PtDefend rim {season}",
+                lambda: _fetch_pt_team_defend(
+                    season,
+                    date_to,
+                    defense_category="Less Than 6Ft",
+                    use_cache=use_cache,
+                ),
+                retries=2,
+                use_cache=False,
+            ),
+        ),
+        (
+            "coach_home",
+            lambda: _fetch_coach_name(
+                int(home["id"]), season, use_cache=use_cache
+            ),
+        ),
+        (
+            "coach_away",
+            lambda: _fetch_coach_name(
+                int(away["id"]), season, use_cache=use_cache
+            ),
+        ),
+    ]
+    if allow_fallback:
+        opt_jobs.extend(
+            [
+                (
+                    "adv_fb",
+                    lambda: soft_fetch(
+                        f"player advanced {fb_season}",
+                        lambda: _fetch_league_player_advanced(
+                            fb_season, None, use_cache=use_cache
+                        ),
+                        retries=2,
+                        use_cache=False,
+                    ),
+                ),
+                (
+                    "hustle_fb",
+                    lambda: soft_fetch(
+                        f"hustle {fb_season}",
+                        lambda: _fetch_team_hustle(
+                            fb_season, None, use_cache=use_cache
+                        ),
+                        retries=2,
+                        use_cache=False,
+                    ),
+                ),
+            ]
+        )
+    w3 = parallel_map(opt_jobs)
+
+    def _soft_val(key: str) -> tuple[Any, str | None]:
+        raw = w3.get(key)
+        if isinstance(raw, Exception):
+            return None, f"{key}: {raw}"
+        if isinstance(raw, tuple) and len(raw) == 2:
+            return raw[0], raw[1]
+        return raw, None
+
+    adv_rows, adv_err = _soft_val("adv_cur")
+    if adv_err or not adv_rows:
+        if adv_err:
+            feed_notes.append(f"advanced {season}: FAILED — {adv_err}")
+        adv_fb, adv_fb_err = _soft_val("adv_fb") if allow_fallback else (None, None)
+        if adv_fb:
+            adv_rows = adv_fb
+            feed_notes.append(f"advanced: using {fb_season} ({len(adv_rows)} rows)")
+        else:
+            if adv_fb_err:
+                feed_notes.append(f"advanced {fb_season}: FAILED — {adv_fb_err}")
+            feed_notes.append("advanced: unavailable (USG/TS disabled)")
             adv_rows = None
+    else:
+        feed_notes.append(f"advanced {season}: OK ({len(adv_rows)} rows)")
     _attach_player_advanced(home_t, adv_rows)
     _attach_player_advanced(away_t, adv_rows)
 
-    # Hustle (deflections / contested) — prefer current, else last season
-    hustle_rows: list[dict[str, Any]] | None = None
-    try:
-        _say(f"  fetching team hustle ({season}) ...")
-        hustle_rows = _fetch_team_hustle(season, date_to)
-    except Exception as exc:  # noqa: BLE001
-        _say(f"  hustle current warning: {exc}")
-        hustle_rows = None
-    if not hustle_rows and allow_fallback:
-        try:
-            _say(f"  fetching team hustle ({fb_season}) ...")
-            hustle_rows = _fetch_team_hustle(fb_season, None)
-        except Exception as exc:  # noqa: BLE001
-            _say(f"  hustle last-season warning: {exc}")
+    hustle_rows, hustle_err = _soft_val("hustle_cur")
+    if hustle_err or not hustle_rows:
+        if hustle_err:
+            feed_notes.append(f"hustle {season}: FAILED — {hustle_err}")
+        h_fb, h_fb_err = _soft_val("hustle_fb") if allow_fallback else (None, None)
+        if h_fb:
+            hustle_rows = h_fb
+            feed_notes.append(f"hustle: using {fb_season} ({len(hustle_rows)} rows)")
+        else:
+            if h_fb_err:
+                feed_notes.append(f"hustle {fb_season}: FAILED — {h_fb_err}")
+            feed_notes.append("hustle: unavailable (deflection/contest no-op)")
             hustle_rows = None
+    else:
+        feed_notes.append(f"hustle {season}: OK ({len(hustle_rows)} rows)")
     _attach_team_hustle(home_t, hustle_rows)
     _attach_team_hustle(away_t, hustle_rows)
 
-    # Head coaches (best-effort)
-    home_coach = _fetch_coach_name(int(home["id"]), season) or _fetch_coach_name(
-        int(home["id"]), fb_season
+    pt_o, pt_o_err = _soft_val("pt_overall")
+    pt_3, pt_3_err = _soft_val("pt_three")
+    pt_r, pt_r_err = _soft_val("pt_rim")
+    for label, err in (
+        ("PtDefend Overall", pt_o_err),
+        ("PtDefend 3PT", pt_3_err),
+        ("PtDefend rim", pt_r_err),
+    ):
+        if err:
+            feed_notes.append(f"{label}: FAILED — {err}")
+    if pt_o or pt_3 or pt_r:
+        feed_notes.append(
+            f"PtDefend: OK (overall={'yes' if pt_o else 'no'}, "
+            f"3pt={'yes' if pt_3 else 'no'}, rim={'yes' if pt_r else 'no'})"
+        )
+    else:
+        feed_notes.append("PtDefend: unavailable (shot-location D no-op)")
+    _attach_pt_defend(home_t, overall=pt_o, threes=pt_3, rim=pt_r)
+    _attach_pt_defend(away_t, overall=pt_o, threes=pt_3, rim=pt_r)
+
+    home_coach = (
+        w3.get("coach_home")
+        if not isinstance(w3.get("coach_home"), Exception)
+        else ""
     )
-    away_coach = _fetch_coach_name(int(away["id"]), season) or _fetch_coach_name(
-        int(away["id"]), fb_season
+    away_coach = (
+        w3.get("coach_away")
+        if not isinstance(w3.get("coach_away"), Exception)
+        else ""
     )
-    _finalize_team_context(home_t, coach_name=home_coach)
-    _finalize_team_context(away_t, coach_name=away_coach)
+    home_coach = home_coach or (
+        _fetch_coach_name(int(home["id"]), fb_season, use_cache=use_cache)
+        if allow_fallback
+        else ""
+    )
+    away_coach = away_coach or (
+        _fetch_coach_name(int(away["id"]), fb_season, use_cache=use_cache)
+        if allow_fallback
+        else ""
+    )
+    if home_coach:
+        feed_notes.append(f"coach home: {home_coach}")
+    else:
+        feed_notes.append("coach home: unavailable")
+    if away_coach:
+        feed_notes.append(f"coach away: {away_coach}")
+    else:
+        feed_notes.append("coach away: unavailable")
+
+    _finalize_team_context(home_t, coach_name=str(home_coach or ""))
+    _finalize_team_context(away_t, coach_name=str(away_coach or ""))
 
     from nba_sim.contextfeats import build_matchup_notes
 
@@ -1150,12 +1525,16 @@ def _load_live(
         game_date=game_date.isoformat() if game_date else None,
         provenance=provenance,
         matchup_notes=list(ctx_notes.lines),
+        feed_notes=feed_notes,
     )
     _write_cache(cache_key, _matchup_to_dict(md))
     _say(
         f"  live OK: {home_t.abbreviation} n={len(home_t.players)} "
         f"{away_t.abbreviation} n={len(away_t.players)} season={season}"
     )
+    for line in feed_notes:
+        if "FAILED" in line or "unavailable" in line:
+            _say(f"  feed: {line}")
     for line in ctx_notes.lines:
         _say(f"  matchup: {line}")
     for line in provenance.summary_lines():
@@ -1184,6 +1563,7 @@ def _matchup_to_dict(md: MatchupData) -> dict[str, Any]:
         "injury_notes": md.injury_notes,
         "rest_notes": md.rest_notes,
         "matchup_notes": md.matchup_notes,
+        "feed_notes": md.feed_notes,
     }
 
 
@@ -1224,6 +1604,9 @@ def _team_from_dict(d: dict[str, Any]) -> TeamSeason:
         coach_style_label=str(d.get("coach_style_label") or ""),
         deflections_pg=float(d.get("deflections_pg") or 0.0),
         contested_shots_pg=float(d.get("contested_shots_pg") or 0.0),
+        pt_dfg_overall=float(d.get("pt_dfg_overall") or 0.0),
+        pt_dfg_three=float(d.get("pt_dfg_three") or 0.0),
+        pt_dfg_rim=float(d.get("pt_dfg_rim") or 0.0),
     )
     return _finalize_team_context(team, coach_name=team.coach_name)
 
@@ -1257,6 +1640,7 @@ def _matchup_from_dict(d: dict[str, Any], source: str | None = None) -> MatchupD
         injury_notes=list(d.get("injury_notes") or []),
         rest_notes=list(d.get("rest_notes") or []),
         matchup_notes=notes,
+        feed_notes=list(d.get("feed_notes") or []),
     )
 
 

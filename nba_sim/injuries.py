@@ -1,10 +1,13 @@
-"""Injury / inactive adjustments (v1).
+"""Injury / inactive adjustments.
 
-Source (live): ESPN public site API
-  https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries
+Sources (live, in order):
+  1. ESPN site API (primary)
+     https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries
+  2. ESPN core sports API (fallback if primary empty/fails)
+     https://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/injuries
 
 Limitations:
-- Unofficial third-party feed; not NBA.com official injury report.
+- Unofficial third-party feeds; not NBA.com official injury report.
 - Status strings vary; we map Out/Doubtful → 0 minutes, Questionable → 50%,
   Probable → 100% (no change).
 - Name matching is fuzzy (normalized lowercase); misses are skipped with a note.
@@ -20,12 +23,17 @@ import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Any, Iterable
 
 from nba_sim.data import MatchupData, PlayerSeason, TeamSeason
+from nba_sim.httputil import soft_fetch
 
 ESPN_INJURIES_URL = (
     "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries"
+)
+ESPN_CORE_INJURIES_URL = (
+    "https://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/injuries"
+    "?limit=200"
 )
 
 # Minutes multipliers by normalized status keyword
@@ -40,6 +48,12 @@ STATUS_MULT = {
     "probable": 1.0,
     "available": 1.0,
 }
+
+_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/122.0.0.0 Safari/537.36"
+)
 
 
 @dataclass
@@ -70,18 +84,21 @@ def _status_mult(status: str) -> float:
     return 1.0
 
 
-def fetch_espn_injuries(timeout: float = 20.0) -> list[InjuryEntry]:
-    """Pull current NBA injury list from ESPN site API."""
+def _http_json(url: str, timeout: float = 25.0) -> Any:
     req = urllib.request.Request(
-        ESPN_INJURIES_URL,
+        url,
         headers={
-            "User-Agent": "nba-sim/0.3 (research; +https://github.com/Josiahjc01/NBA-SIM)",
-            "Accept": "application/json",
+            "User-Agent": _UA,
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.espn.com/",
         },
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
-        payload = json.loads(resp.read().decode("utf-8"))
+        return json.loads(resp.read().decode("utf-8"))
 
+
+def _parse_site_injuries(payload: dict) -> list[InjuryEntry]:
     entries: list[InjuryEntry] = []
     for team_block in payload.get("injuries") or []:
         team = team_block.get("team") or {}
@@ -103,6 +120,106 @@ def fetch_espn_injuries(timeout: float = 20.0) -> list[InjuryEntry]:
                 )
             )
     return entries
+
+
+def _parse_core_injuries(payload: dict) -> list[InjuryEntry]:
+    """Best-effort parse of ESPN core injuries index (items may be refs)."""
+    entries: list[InjuryEntry] = []
+    items = payload.get("items") or payload.get("entries") or []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        # Some payloads embed athlete/status; others are $ref-only — skip refs.
+        if "$ref" in item and "athlete" not in item:
+            continue
+        athlete = item.get("athlete") or {}
+        name = str(
+            athlete.get("displayName")
+            or athlete.get("fullName")
+            or item.get("displayName")
+            or ""
+        )
+        status = str(
+            item.get("status")
+            or (item.get("type") or {}).get("description")
+            or ""
+        )
+        team = item.get("team") or {}
+        abbr = str(team.get("abbreviation") or "").upper()
+        if not name:
+            continue
+        entries.append(
+            InjuryEntry(
+                name=name,
+                team_abbr=abbr,
+                status=status,
+                mult=_status_mult(status),
+                detail="",
+            )
+        )
+    return entries
+
+
+def fetch_espn_injuries(timeout: float = 25.0) -> list[InjuryEntry]:
+    """Pull current NBA injury list (ESPN site → core fallback)."""
+    from nba_sim.httputil import read_endpoint_cache, write_endpoint_cache, with_retries
+
+    cache_key = "espn_injuries_site_v1"
+    hit = read_endpoint_cache(cache_key, use_cache=True)
+    if isinstance(hit, list) and hit:
+        return [
+            InjuryEntry(
+                name=str(r.get("name", "")),
+                team_abbr=str(r.get("team_abbr", "")),
+                status=str(r.get("status", "")),
+                mult=float(r.get("mult", 1.0)),
+                detail=str(r.get("detail", "")),
+            )
+            for r in hit
+            if r.get("name")
+        ]
+
+    def primary():
+        return _parse_site_injuries(_http_json(ESPN_INJURIES_URL, timeout=timeout))
+
+    try:
+        rows = with_retries("ESPN site injuries", primary, retries=3, required=True)
+    except Exception as exc:  # noqa: BLE001
+        rows = []
+        err = str(exc)
+    else:
+        err = None
+    if rows:
+        write_endpoint_cache(
+            cache_key,
+            [
+                {
+                    "name": e.name,
+                    "team_abbr": e.team_abbr,
+                    "status": e.status,
+                    "mult": e.mult,
+                    "detail": e.detail,
+                }
+                for e in rows
+            ],
+        )
+        return rows
+
+    def secondary():
+        return _parse_core_injuries(
+            _http_json(ESPN_CORE_INJURIES_URL, timeout=timeout)
+        )
+
+    rows2, err2 = soft_fetch(
+        "ESPN core injuries",
+        secondary,
+        retries=2,
+        use_cache=False,
+    )
+    if rows2:
+        return rows2
+    parts = [p for p in (err, err2) if p]
+    raise RuntimeError("; ".join(parts) or "ESPN injury feeds empty")
 
 
 def load_injuries_csv(path: str) -> list[InjuryEntry]:
@@ -207,7 +324,7 @@ def apply_injuries(
             notes.append(
                 f"injuries from ESPN feed ({len(live_rows)} rows) — unofficial; see docs"
             )
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError, RuntimeError) as exc:
             notes.append(f"injury live fetch failed ({exc}); continuing without")
     if not loaded:
         matchup.injury_notes = notes

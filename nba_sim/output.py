@@ -78,6 +78,13 @@ def format_report(
                 f"3PAR {a.three_par:.0%}/{h.three_par:.0%}"
             )
 
+    if matchup.feed_notes:
+        lines.append("")
+        lines.append("Live feed provenance")
+        lines.append("-" * 64)
+        for n in matchup.feed_notes:
+            lines.append(f"  {n}")
+
     # Team summary with win%
     lines.append("")
     lines.append("Team results")
@@ -240,6 +247,7 @@ def summary_to_dict(summary: SimSummary, matchup: MatchupData) -> dict[str, Any]
         "injuries_applied": matchup.injuries_applied,
         "injury_notes": matchup.injury_notes,
         "matchup_notes": matchup.matchup_notes,
+        "feed_notes": matchup.feed_notes,
         "home_context": {
             "coach": matchup.home.coach_name,
             "coach_style": matchup.home.coach_style_label,
@@ -247,6 +255,9 @@ def summary_to_dict(summary: SimSummary, matchup: MatchupData) -> dict[str, Any]
             "frontcourt_height_in": matchup.home.frontcourt_height_in,
             "deflections_pg": matchup.home.deflections_pg,
             "contested_shots_pg": matchup.home.contested_shots_pg,
+            "pt_dfg_overall": matchup.home.pt_dfg_overall,
+            "pt_dfg_three": matchup.home.pt_dfg_three,
+            "pt_dfg_rim": matchup.home.pt_dfg_rim,
         },
         "away_context": {
             "coach": matchup.away.coach_name,
@@ -255,6 +266,9 @@ def summary_to_dict(summary: SimSummary, matchup: MatchupData) -> dict[str, Any]
             "frontcourt_height_in": matchup.away.frontcourt_height_in,
             "deflections_pg": matchup.away.deflections_pg,
             "contested_shots_pg": matchup.away.contested_shots_pg,
+            "pt_dfg_overall": matchup.away.pt_dfg_overall,
+            "pt_dfg_three": matchup.away.pt_dfg_three,
+            "pt_dfg_rim": matchup.away.pt_dfg_rim,
         },
         "lines": None
         if lp is None

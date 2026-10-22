@@ -19,7 +19,8 @@ pip install -r requirements.txt
 Do **not** pass `--fixtures` for a real matchup. Fixtures are outdated offline smoke only.
 
 ```bash
-python -m nba_sim --home SAC --away LAC --n 5000
+# Just works: pulls rosters, base stats, blend feeds, optional hustle/PtDefend/injuries
+python -m nba_sim --home LAC --away SAC --n 5000
 
 # Full names
 python -m nba_sim --home "Sacramento Kings" --away "LA Clippers" --n 5000
@@ -33,6 +34,35 @@ python -m nba_sim --home SAC --away LAC --season 2026-27 --n 5000
 # Thin wrapper
 python simulate.py --home SAC --away LAC --n 5000
 ```
+
+### Doctor / data check
+
+Before a long slate, verify each live source:
+
+```bash
+python -m nba_sim doctor
+python -m nba_sim --check-data          # same
+python -m nba_sim doctor --json         # machine-readable
+```
+
+Required feeds (player/team stats, roster, scoreboard) must pass. Optional feeds (hustle, PtDefend, ESPN injuries) warn and degrade gracefully with loud `feed:` provenance.
+
+### Live fetch env tips (`stats.nba.com`)
+
+| Env | Default | Meaning |
+|-----|---------|---------|
+| `NBA_SIM_TIMEOUT` | `90` | Seconds per NBA Stats request |
+| `NBA_SIM_RETRIES` | `5` | Hard retries for required feeds |
+| `NBA_SIM_PAUSE` | `0.55` | Pause (+jitter) before each live call |
+| `NBA_SIM_CACHE_TTL` | `21600` | Endpoint cache TTL (seconds) |
+| `NBA_SIM_MAX_WORKERS` | `4` | Parallel independent fetches |
+
+```bash
+export NBA_SIM_TIMEOUT=120 NBA_SIM_RETRIES=6
+python -m nba_sim --home LAC --away SAC --n 5000 --no-cache   # force fresh
+```
+
+Caches: `.cache/` (matchup aggregates) + `.cache/endpoints/` (per-endpoint JSON). Safe to delete.
 
 ### Full-day slate
 
@@ -99,12 +129,13 @@ Live odds feeds are not wired; pass lines via flags or `--lines-csv` for slate.
 | `--quiet-priors` | no | Compact provenance (team notes only) |
 | `--top N` | no | Limit player rows per side in text output |
 | `--no-rest` | no | Disable B2B check when tip date is set |
-| `--no-cache` | no | Bypass on-disk API cache |
+| `--no-cache` | no | Bypass on-disk API cache (matchup + endpoint) |
 | `--no-fallback` | no | Current-season priors only |
-| `--injuries` | no | Live ESPN injury feed |
+| `--injuries` / `--no-injuries` | no | ESPN injuries (default **on** live) |
 | `--injuries-csv` | no | Injury CSV override |
 | `--spread` / `--total` | no | Home spread / game total |
 | `--lines-csv` | no | Slate lines: `away,home,spread,total` |
+| `--check-data` / `doctor` | no | Verify connectivity to each live source |
 | `--fixtures` | no | **Offline smoke only** — not live 2026-27 |
 
 You do **not** pass player stats or box scores. If live fetch fails, the CLI errors (no silent fixture fallback).
@@ -118,9 +149,10 @@ On live loads the sim also pulls:
 | Height / weight / position | `CommonTeamRoster` | Frontcourt + **slot D** (G/F/C) → 2P/3P contest |
 | USG% / TS% / eFG% | `LeagueDashPlayerStats` Advanced | Usage blend + finishing |
 | Hustle | `LeagueHustleStatsTeam` | Deflections → TOV; contested → FG |
+| PtDefend | `LeagueDashPtTeamDefend` | Rim / 3PT / overall D_FG → FG2/FG3 |
 | Head coach + style | `TeamInfoCommon` + pace/3PAR/DRtg | 3PA tilt, TOV pressure, pace notes |
 | Rest / travel | Yesterday (+ tip−3) slate only | B2B, road B2B, 3-in-4 FG/pace |
-| Injuries | ESPN (default **on** live) | Out/Doubtful→0; Q→×0.5; `--no-injuries` to skip |
+| Injuries | ESPN site (+ core fallback); default **on** live | Out/Doubtful→0; Q→×0.5; `--no-injuries` to skip |
 
 Styles are derived (push-pace / grind / live-by-three / paint-first / defense-first), not a full playbook database. Report prints **Matchup context** + calibration flags.
 
