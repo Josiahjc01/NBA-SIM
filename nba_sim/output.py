@@ -8,6 +8,7 @@ from typing import Any
 from nba_sim.data import MatchupData
 from nba_sim.lines import format_line_block
 from nba_sim.model import SimSummary
+from nba_sim.wagers import format_top_wagers, rank_slate_top_wagers, rank_top_wagers
 
 
 def _pct(x: float) -> str:
@@ -82,6 +83,13 @@ def format_report(
         lines.append("Betting lines")
         lines.append("-" * 64)
         for n in matchup.line_notes:
+            lines.append(f"  {n}")
+
+    if getattr(matchup, "ref_notes", None):
+        lines.append("")
+        lines.append("Officials / foul tendency")
+        lines.append("-" * 64)
+        for n in matchup.ref_notes:
             lines.append(f"  {n}")
 
     if matchup.matchup_notes:
@@ -226,6 +234,11 @@ def format_report(
             )
             for iss in cal["issues"][:4]:
                 lines.append(f"  [{iss.get('severity')}] {iss.get('message')}")
+
+    # Bottom-of-report Top 5 wagers (canonical — see nba_sim/wagers.py)
+    picks = rank_top_wagers(summary, matchup)
+    lines.append("")
+    lines.extend(format_top_wagers(picks))
     lines.append("=" * 64)
     return "\n".join(lines)
 
@@ -317,6 +330,7 @@ def summary_to_dict(summary: SimSummary, matchup: MatchupData) -> dict[str, Any]
             "over_pct": lp.over_pct,
             "under_pct": lp.under_pct,
         },
+        "top_wagers": [p.to_dict() for p in rank_top_wagers(summary, matchup)],
         "team_notes": dict(matchup.provenance.team_notes)
         if matchup.provenance
         else {},
@@ -362,5 +376,8 @@ def format_slate_table(
         )
         if r.get("note"):
             lines.append(f"       {r['note']}")
+    # Slate-level Top 5 wagers (same canonical formatter)
+    lines.append("")
+    lines.extend(format_top_wagers(rank_slate_top_wagers(rows)))
     lines.append("=" * 100)
     return "\n".join(lines)

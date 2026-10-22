@@ -35,6 +35,8 @@ REGULATION_POSSESSIONS_SCALE = 1.0
 OT_POSSESSIONS = 12  # ~5 min OT ≈ 12 poss each side roughly alternating
 MAX_OT_PERIODS = 3
 SHOOTING_FOUL_RATE = 0.085  # on 2PT attempts (overridden by team FTR when present)
+THREE_FOUL_RATE = 0.018  # rare shooting foul on 3PA → 3 FTA
+AND_ONE_RATE = 0.055  # foul on made 2PT → +1 FTA
 OREB_RATE_DEFAULT = 0.28
 TOV_RATE_FLOOR = 0.08
 TOV_RATE_CEIL = 0.18
@@ -573,17 +575,25 @@ def _run_possessions(
         is_three = rng.random() < offense.three_rate[shooter]
         offense.lines[shooter].fga += 1
 
-        # Shooting foul on 2PT (team FTR when available)
         foul_p = float(getattr(offense, "foul_rate", 0.0) or SHOOTING_FOUL_RATE)
-        if (not is_three) and rng.random() < foul_p:
-            fta = 2
-            offense.lines[shooter].fta += fta
-            made = 0
-            for _ in range(fta):
+
+        def _shoot_fts(n_fta: int) -> int:
+            made_ft = 0
+            offense.lines[shooter].fta += n_fta
+            for _ in range(n_fta):
                 if rng.random() < offense.ft[shooter]:
-                    made += 1
-            offense.lines[shooter].pts += made
-            points += made
+                    made_ft += 1
+            offense.lines[shooter].pts += made_ft
+            return made_ft
+
+        # Shooting foul on 2PT miss-path (team FTR when available) → 2 FTA
+        if (not is_three) and rng.random() < foul_p:
+            points += _shoot_fts(2)
+            continue
+
+        # Rare shooting foul on 3PA → 3 FTA (no FG made)
+        if is_three and rng.random() < THREE_FOUL_RATE * (foul_p / SHOOTING_FOUL_RATE):
+            points += _shoot_fts(3)
             continue
 
         p_make = offense.fg3[shooter] if is_three else offense.fg2[shooter]
@@ -592,6 +602,11 @@ def _run_possessions(
             add = 3 if is_three else 2
             offense.lines[shooter].pts += add
             points += add
+            # And-1: foul on made 2PT → one extra FT
+            if (not is_three) and rng.random() < AND_ONE_RATE * (
+                foul_p / SHOOTING_FOUL_RATE
+            ):
+                points += _shoot_fts(1)
             # Assist: probability scales with team AST/FGM prior via ast weights
             # ~65% of makes assisted (NBA-ish); drawer ≠ shooter
             if rng.random() < 0.65 and len(offense.lines) > 1:

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.7.0
+Gap package toward firm v1.0 (release captain owns `1.0.0` tag). Cache schema **`blendv10`** (`--no-cache` once after upgrade).
+
+1. **Play-In precision** — tip ≈ Apr 11–18 → `PlayIn` (RS boards + stakes regime); Apr 19+ → Playoffs; `--season-type PlayIn`
+2. **Garbage-time filter** — soft fringe rotation MIN/FG haircut (no tip boxes)
+3. **Starter confirmation** — top 5 by last-N/evidence MIN, mild floor bump
+4. **On/Off D** — `TeamPlayerOnOffSummary` → soft DRtg nudge (heavy shrink)
+5. **Foul/FT game** — 3PT shooting fouls (3 FTA) + and-1 on made 2PT
+6. **Ref tendencies** — optional `--refs` / `--refs-csv` foul× crew mult
+7. **Load management** — star MIN cut on road B2B / 4-in-6 (beyond plain B2B)
+8. **Market calibration** — extreme cover/over + sharp-ML soft-margin flags (no tip leak)
+9. **Official NBA injuries** — CDN best-effort merge (403 OK; ESPN remains primary)
+10. **Top 5 wagers** — every report/slate ends with ranked ML/spread/total/player leans (no invented book odds)
+11. **Skip live in-game state** — scoreboard pairing only; LineScore never model input
+
 ## 0.6.0
 Accuracy backlog (all 8) in one bump; cache schema **`blendv9`** (`--no-cache` once after upgrade).
 

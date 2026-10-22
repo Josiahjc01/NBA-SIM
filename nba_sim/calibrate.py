@@ -88,8 +88,50 @@ def check_summary_bands(summary: Any) -> list[CalibrationIssue]:
     return issues
 
 
+def check_market_alignment(summary: Any) -> list[CalibrationIssue]:
+    """
+    Soft checks vs provided closing lines (never tip-game results).
+
+    Flags suspiciously extreme cover/over % that may indicate prior leak or
+    mis-wired spread sign — informational only.
+    """
+    issues: list[CalibrationIssue] = []
+    lp = getattr(summary, "line_probs", None)
+    if lp is None:
+        return issues
+    for label, pct in (
+        ("home_cover", getattr(lp, "home_cover_pct", None)),
+        ("over", getattr(lp, "over_pct", None)),
+    ):
+        if pct is None:
+            continue
+        p = float(pct)
+        if p < 0.12 or p > 0.88:
+            issues.append(
+                CalibrationIssue(
+                    "market_extreme",
+                    f"{label}={100 * p:.1f}% is extreme vs a provided line "
+                    "(check spread sign / priors; not tip-result calibrated)",
+                    "warn",
+                )
+            )
+    # Moneyline sharpness without a huge margin can be a prior artifact
+    hw = float(getattr(summary, "home_win_pct", 0.5) or 0.5)
+    margin = abs(float(getattr(summary, "mean_margin", 0.0) or 0.0))
+    if hw >= 0.85 and margin < 8.0:
+        issues.append(
+            CalibrationIssue(
+                "sharp_ml_soft_margin",
+                f"home win {100 * hw:.1f}% but mean margin only {margin:.1f} — "
+                "possible rotation/usage artifact",
+                "warn",
+            )
+        )
+    return issues
+
+
 def audit_calibration(summary: Any) -> dict[str, Any]:
-    issues = check_summary_bands(summary)
+    issues = check_summary_bands(summary) + check_market_alignment(summary)
     return {
         "ok": not any(i.severity == "error" for i in issues),
         "n_warn": sum(1 for i in issues if i.severity == "warn"),
@@ -99,4 +141,5 @@ def audit_calibration(summary: Any) -> dict[str, Any]:
             "mean_total": [MEAN_TOTAL_LO, MEAN_TOTAL_HI],
             "mean_team": [MEAN_TEAM_LO, MEAN_TEAM_HI],
         },
+        "market": "aligned_to_provided_lines_only",  # never tip-game finals
     }

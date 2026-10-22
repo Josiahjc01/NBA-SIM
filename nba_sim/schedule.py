@@ -52,6 +52,10 @@ def fetch_slate(game_date: date) -> list[SlateGame]:
 
     Does **not** use final scores / box scores as sim priors — only matchup
     pairing (who plays whom). Game results on that date are ignored.
+
+    Explicitly out of product: live in-game / mid-game state. We read
+    GameHeader for IDs/status text only — never LineScore points, period,
+    or live clock as model inputs.
     """
     from nba_api.stats.endpoints import scoreboardv2
 
@@ -72,6 +76,7 @@ def fetch_slate(game_date: date) -> list[SlateGame]:
         use_cache=True,
         cache_key=f"ep_scoreboard_{date_str}",
     )
+    # Intentionally ignore LineScore / lastMeeting / predictive payloads.
     headers = payload.get("GameHeader") or []
     games: list[SlateGame] = []
     for row in headers:
@@ -87,6 +92,7 @@ def fetch_slate(game_date: date) -> list[SlateGame]:
                 away_team_id=away_id,
                 home_abbr=_abbr_from_id(home_id),
                 away_abbr=_abbr_from_id(away_id),
+                # Status text is provenance only (Final/Scheduled) — never scores.
                 status=str(row.get("GAME_STATUS_TEXT") or ""),
             )
         )

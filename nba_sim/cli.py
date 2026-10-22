@@ -88,9 +88,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="TYPE",
         help=(
-            "Regular Season | Playoffs | Pre Season | IST. Default: derived from "
-            "--date (Playoffs ≈ Apr 15–Jun 30; IST/NBA Cup ≈ Nov 21–Dec 17). "
-            "IST still uses Regular Season boards + Cup regime."
+            "Regular Season | Playoffs | PlayIn | Pre Season | IST. Default: "
+            "derived from --date (Play-In ≈ Apr 11–18; Playoffs ≈ Apr 19–Jun 30; "
+            "IST/NBA Cup ≈ Nov 21–Dec 17). PlayIn/IST use Regular Season boards "
+            "+ stakes regime."
         ),
     )
     p.add_argument("--n", type=int, default=5000, help="Number of simulations (default 5000; max 200000)")
@@ -195,6 +196,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--lines-csv",
         default=None,
         help="Slate lines CSV: away,home,spread,total (blank cells OK).",
+    )
+    p.add_argument(
+        "--refs",
+        default=None,
+        metavar="NAMES",
+        help="Comma-separated referee crew names for foul tendency (optional).",
+    )
+    p.add_argument(
+        "--refs-csv",
+        default=None,
+        help="Optional refs CSV: crew,foul_mult|fta_rate.",
     )
     return p
 
@@ -302,8 +314,20 @@ def _run_one_matchup(
             _log(args, f"  injury: … +{len(matchup.injury_notes) - 8} more")
     _apply_rest_flags(matchup, game_date, args)
 
-    # Playoff / IST regime (after injuries so OUT players stay out)
-    mode = season_type if season_type in ("Playoffs", "IST") else (
+    # Ref tendencies (optional crew / CSV — never live in-game whistles)
+    from nba_sim.refs import apply_ref_tendencies
+
+    crew = None
+    if getattr(args, "refs", None):
+        crew = [x.strip() for x in str(args.refs).split(",") if x.strip()]
+    rnotes_refs = apply_ref_tendencies(
+        matchup, crew_names=crew, refs_csv=getattr(args, "refs_csv", None)
+    )
+    for n in rnotes_refs:
+        _log(args, f"  refs: {n}")
+
+    # Playoff / PlayIn / IST regime (after injuries so OUT players stay out)
+    mode = season_type if season_type in ("Playoffs", "PlayIn", "IST") else (
         matchup.game_mode or "Regular Season"
     )
     rnotes = apply_game_mode(matchup, mode)

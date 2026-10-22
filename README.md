@@ -26,7 +26,7 @@ python -m nba_sim --home BOS --away NYK --n 5000
 python -m nba_sim --home Nuggets --away "Minnesota Timberwolves" --n 5000
 python -m nba_sim --home GSW --away LAL --n 5000
 
-# Tip date → season + season_type (Playoffs ≈ Apr 15–Jun 30); priors through day before tip
+# Tip date → season + season_type (Play-In ≈ Apr 11–18; Playoffs ≈ Apr 19–Jun 30); priors through day before tip
 python -m nba_sim --home OKC --away DEN --date 2027-05-12 --n 5000
 python -m nba_sim --home OKC --away DEN --date 2027-05-12 --season-type Playoffs --n 5000
 
@@ -47,7 +47,9 @@ python -m nba_sim --check-data          # same
 python -m nba_sim doctor --json         # machine-readable
 ```
 
-Required feeds (player/team stats, roster, scoreboard) must pass. Optional feeds (hustle, team/player PtDefend, Four Factors, shot locations, last-N, lineups, clutch, ESPN injuries/odds) warn and degrade gracefully with loud provenance. After upgrades use `--no-cache` once (schema **`blendv9`**).
+Required feeds (player/team stats, roster, scoreboard) must pass. Optional feeds (hustle, team/player PtDefend, Four Factors, shot locations, last-N, lineups, clutch, on/off, ESPN injuries/odds, NBA CDN injuries) warn and degrade gracefully with loud provenance. After upgrades use `--no-cache` once (schema **`blendv10`**).
+
+Every single-game and slate report ends with a **Top 5 wagers** section (ML / spread / total / player leans from the sim — no invented book odds).
 
 ### Live fetch env tips (`stats.nba.com`)
 
