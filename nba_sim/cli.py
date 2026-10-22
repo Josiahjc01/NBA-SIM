@@ -251,14 +251,37 @@ def _run_one_matchup(
     seed: int | None,
     season_type: str = "Regular Season",
 ) -> tuple:
-    from datetime import timedelta
-
     from nba_sim.enrich import enrich_matchup
     from nba_sim.lines import light_total_calibration, resolve_game_lines
     from nba_sim.regime import apply_game_mode
     from nba_sim.season import boards_season_type
 
     force_fx = bool(args.fixtures or args.fixture_file)
+
+    # Audit H1: warn when tip's scoreboard already shows Final/in-progress
+    if game_date is not None and not force_fx:
+        try:
+            from nba_sim.schedule import fetch_slate
+
+            for g in fetch_slate(game_date):
+                same = (
+                    int(g.home_team_id) == int(home["id"])
+                    and int(g.away_team_id) == int(away["id"])
+                )
+                st = (g.status or "").lower()
+                if same and (
+                    "final" in st or "progress" in st or "halftime" in st
+                ):
+                    _log(
+                        args,
+                        f"  warn: scoreboard '{g.status}' for tip "
+                        f"{game_date.isoformat()} — priors use DateTo=tip−1 only; "
+                        "re-sims of finished tips must pass --date (never omit)",
+                    )
+                    break
+        except Exception:  # noqa: BLE001
+            pass
+
     matchup = load_matchup(
         home,
         away,
@@ -277,11 +300,13 @@ def _run_one_matchup(
         if len(fails) > 10:
             _log(args, f"  feed: … +{len(fails) - 10} more")
 
-    # v0.6 enrichment (last-N / player PtDefend / lineups / SoS / clutch)
+    # Enrichment DateTo MUST match data.py (_date_to_param → MM/DD/YYYY).
+    # ISO YYYY-MM-DD is ignored/misparsed by stats.nba.com → tip-inclusive
+    # "latest" boards (audit Critical C1 / PR #3).
     if not force_fx and not getattr(args, "no_enrich", False):
-        date_to = None
-        if game_date is not None:
-            date_to = (game_date - timedelta(days=1)).isoformat()
+        from nba_sim.data import _date_to_param, prior_cutoff
+
+        date_to = _date_to_param(prior_cutoff(game_date))
         enotes = enrich_matchup(
             matchup,
             season=season,
@@ -404,16 +429,21 @@ def _run_single(args) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
-    if game_date:
-        from datetime import timedelta
+    from nba_sim.data import prior_cutoff
 
-        prior_through = (game_date - timedelta(days=1)).isoformat()
+    cutoff = prior_cutoff(game_date)
+    prior_through = cutoff.isoformat() if cutoff else "?"
+    if game_date:
         date_msg = (
             f", tip {game_date.isoformat()}, priors through {prior_through}, "
             f"type={season_type}"
         )
     else:
-        date_msg = f", latest season-to-date, type={season_type}"
+        # H1: undated still cuts off at Eastern yesterday (not tip-inclusive latest)
+        date_msg = (
+            f", undated → priors through Eastern yesterday ({prior_through}), "
+            f"type={season_type}"
+        )
     _log(
         args,
         f"Loading LIVE priors for {away['abbreviation']} @ {home['abbreviation']} "

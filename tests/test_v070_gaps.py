@@ -56,7 +56,10 @@ def test_play_in_window():
     assert is_play_in_window(date(2027, 4, 12))
     assert not is_play_in_window(date(2027, 4, 10))
     assert season_type_from_date(date(2027, 4, 12)) == "PlayIn"
-    assert season_type_from_date(date(2027, 4, 16)) == "Playoffs"
+    # H3: Apr 15–18 stay PlayIn; Playoffs from Apr 19+
+    assert season_type_from_date(date(2027, 4, 16)) == "PlayIn"
+    assert season_type_from_date(date(2027, 4, 18)) == "PlayIn"
+    assert season_type_from_date(date(2027, 4, 19)) == "Playoffs"
     _, _, st = resolve_season(date_str="2027-04-13")
     assert st == "PlayIn"
     assert boards_season_type("PlayIn") == "PlayIn"
@@ -163,3 +166,39 @@ def test_version_blendv10():
     from nba_sim.data import MATCHUP_CACHE_SCHEMA
     assert __version__ == "0.7.0"
     assert MATCHUP_CACHE_SCHEMA == "blendv10"
+
+
+# --- Audit C1 / H1 / H2 (remediation) ---
+def test_enrich_date_to_matches_core_mmddyyyy():
+    """Anti-leak C1: enrich DateTo must match data._date_to_param (not ISO)."""
+    from nba_sim.data import _date_to_param, prior_cutoff
+
+    tip = date(2026, 10, 22)
+    dto = _date_to_param(prior_cutoff(tip))
+    assert dto == "10/21/2026"
+    assert dto != tip.isoformat()
+    assert "-" not in (dto or "")
+
+
+def test_undated_prior_cutoff_is_eastern_yesterday():
+    """Anti-leak H1: undated runs still DateTo=Eastern yesterday."""
+    from datetime import timedelta
+
+    from nba_sim.data import _date_to_param, prior_cutoff
+    from nba_sim.schedule import today_eastern
+
+    cut = prior_cutoff(None)
+    assert cut == today_eastern() - timedelta(days=1)
+    dto = _date_to_param(cut)
+    assert dto is not None and "/" in dto and "-" not in dto
+
+
+def test_residual_defense_mult_clips_soft_d_stack():
+    """Audit H2: stacked soft-D residuals cannot exceed ±2%."""
+    from nba_sim.model import residual_defense_mult
+
+    soft = residual_defense_mult(1.03, 1.025, 1.025, 1.02, 1.02, 1.03, 1.02)
+    assert soft <= 1.02
+    tough = residual_defense_mult(0.97, 0.975, 0.97, 0.98, 0.98, 0.97, 0.98)
+    assert tough >= 0.98
+    assert residual_defense_mult(1.0, 1.0) == 1.0

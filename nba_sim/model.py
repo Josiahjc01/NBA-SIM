@@ -53,8 +53,26 @@ def defensive_fg_adj(opp_def: float, league_def: float = LEAGUE_DEF_RTG) -> floa
     """
     Make% multiplier from opponent DEF_RATING (pts allowed / 100).
     Higher opp_def → worse defense → adj > 1.
+
+    Primary defense channel (audit H2). Secondary layers go through
+    `residual_defense_mult` (±2% damped) so soft-D cannot compound to ~×1.23.
     """
     return _clip(max(float(opp_def), 90.0) / float(league_def), 0.94, 1.06)
+
+
+def residual_defense_mult(
+    *mults: float, damp: float = 0.25, lo: float = 0.98, hi: float = 1.02
+) -> float:
+    """
+    Collapse stacked secondary D channels (PtDefend / hustle / FF / pos / rim).
+
+    Product is damped toward 1.0 and hard-clipped to ±2% (audit High H2).
+    """
+    prod = 1.0
+    for m in mults:
+        prod *= float(m) if m else 1.0
+    damped = 1.0 + damp * (prod - 1.0)
+    return _clip(damped, lo, hi)
 
 
 def matchup_fingerprint(matchup: MatchupData) -> str:
@@ -443,37 +461,20 @@ def _build_context(
         clutch_m = _clip(clutch_m, 0.97, 1.03)
         garbage_m = float(getattr(p, "garbage_fg_mult", 1.0) or 1.0)
         garbage_m = _clip(garbage_m, 0.97, 1.0)
+        # Primary D = DRtg (in shot_adj). Secondary layers damped ±2% (H2).
+        res2 = residual_defense_mult(
+            pos_fg2, opp_contest, pt_fg2, ppt_fg2, ff_fg2, opp_ff2, rim_m
+        )
+        res3 = residual_defense_mult(
+            pos_fg3, opp_contest, pt_fg3, ppt_fg3, ff_fg3, opp_ff3, c3_fg
+        )
         fg2_p = _clip(
-            fg2_p
-            * shot_adj
-            * fg2_size
-            * ts_mult
-            * pos_fg2
-            * opp_contest
-            * pt_fg2
-            * ppt_fg2
-            * ff_fg2
-            * opp_ff2
-            * rim_m
-            * clutch_m
-            * garbage_m,
+            fg2_p * shot_adj * fg2_size * ts_mult * res2 * clutch_m * garbage_m,
             FG_FLOOR,
             FG_CEIL,
         )
         g3 = _clip(
-            g3
-            * shot_adj
-            * ts_mult
-            * pos_fg3
-            * opp_contest
-            * pt_fg3
-            * ppt_fg3
-            * ff_fg3
-            * opp_ff3
-            * c3_fg
-            * clutch_m
-            * garbage_m
-            + alt_3,
+            g3 * shot_adj * ts_mult * res3 * clutch_m * garbage_m + alt_3,
             FG3_FLOOR,
             FG3_CEIL,
         )

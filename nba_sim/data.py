@@ -224,11 +224,16 @@ def _f(row: dict[str, Any], *keys: str, default: float = 0.0) -> float:
 def prior_cutoff(game_date: date | None) -> date | None:
     """
     Last calendar day whose games may inform the sim.
+
     Tip on D → priors through D-1 only (pre-tip).
-    None → no DateTo filter (latest available season-to-date).
+    Undated live runs (`game_date is None`) → Eastern **yesterday** so
+    evening re-sims of a finished tip cannot pull tip-inclusive S2D
+    (audit High H1). Never tip-day boxes.
     """
     if game_date is None:
-        return None
+        from nba_sim.schedule import today_eastern
+
+        return today_eastern() - timedelta(days=1)
     return game_date - timedelta(days=1)
 
 
