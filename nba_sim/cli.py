@@ -249,8 +249,6 @@ def _run_one_matchup(
     seed: int | None,
     season_type: str = "Regular Season",
 ) -> tuple:
-    from datetime import timedelta
-
     from nba_sim.enrich import enrich_matchup
     from nba_sim.lines import light_total_calibration, resolve_game_lines
     from nba_sim.regime import apply_game_mode
@@ -276,10 +274,13 @@ def _run_one_matchup(
             _log(args, f"  feed: … +{len(fails) - 10} more")
 
     # v0.6 enrichment (last-N / player PtDefend / lineups / SoS / clutch)
+    # DateTo MUST match data.py (_date_to_param → MM/DD/YYYY). ISO YYYY-MM-DD
+    # is ignored/misparsed by stats.nba.com → enrichment can silently use
+    # tip-inclusive "latest" boards (anti-leak Critical).
     if not force_fx and not getattr(args, "no_enrich", False):
-        date_to = None
-        if game_date is not None:
-            date_to = (game_date - timedelta(days=1)).isoformat()
+        from nba_sim.data import _date_to_param, prior_cutoff
+
+        date_to = _date_to_param(prior_cutoff(game_date))
         enotes = enrich_matchup(
             matchup,
             season=season,

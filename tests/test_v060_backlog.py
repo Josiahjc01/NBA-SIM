@@ -256,3 +256,16 @@ def test_cache_schema_blendv9():
 
     assert MATCHUP_CACHE_SCHEMA == "blendv9"
     assert __version__ == "0.6.0"
+
+
+def test_enrich_date_to_matches_core_mmddyyyy():
+    """Anti-leak: enrich DateTo must match data._date_to_param (not ISO)."""
+    from nba_sim.data import _date_to_param, prior_cutoff
+
+    tip = date(2026, 10, 22)
+    dto = _date_to_param(prior_cutoff(tip))
+    assert dto == "10/21/2026"
+    assert dto != tip.isoformat()
+    assert _date_to_param(prior_cutoff(None)) is None
+    # ISO form must never be used for date_to_nullable
+    assert "-" not in (dto or "")
