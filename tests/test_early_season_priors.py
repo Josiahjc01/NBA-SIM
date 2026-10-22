@@ -12,6 +12,7 @@ from nba_sim.priors import (
     K_ROOKIE,
     compute_blend_weights,
     blend_rate_rows,
+    draft_production_scale,
     is_rookie_exp,
     normalize_position,
     rookie_prior_row,
@@ -92,6 +93,13 @@ class RookieTableTests(unittest.TestCase):
         self.assertEqual(row["PLAYER_ID"], 99)
         self.assertGreater(row["PTS"], 5)
         self.assertGreater(row["MIN"], 10)
+
+    def test_draft_scale_lottery_vs_undrafted(self):
+        self.assertGreater(draft_production_scale(1), draft_production_scale(40))
+        top = rookie_prior_row("G", overall_pick=1)
+        late = rookie_prior_row("G", overall_pick=45)
+        self.assertGreater(top["PTS"], late["PTS"])
+        self.assertGreater(top["MIN"], late["MIN"])
 
 
 class BlendRatesTests(unittest.TestCase):

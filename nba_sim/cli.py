@@ -105,6 +105,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="OFFLINE ONLY: bundled outdated sample (NOT live 2026-27). Never the default.",
     )
+    p.add_argument(
+        "--fixture-file",
+        default=None,
+        help="Optional path to a fixture JSON (implies offline fixture mode).",
+    )
 
     # Injuries
     p.add_argument(
@@ -178,14 +183,16 @@ def _run_one_matchup(
     lines: GameLines | None,
     seed: int | None,
 ) -> tuple:
+    force_fx = bool(args.fixtures or args.fixture_file)
     matchup = load_matchup(
         home,
         away,
         season,
         game_date=game_date,
         use_cache=not args.no_cache,
-        force_fixtures=args.fixtures,
+        force_fixtures=force_fx,
         allow_fallback=not args.no_fallback,
+        fixture_path=args.fixture_file,
     )
     _apply_injury_flags(matchup, args)
     _apply_rest_flags(matchup, game_date, args)

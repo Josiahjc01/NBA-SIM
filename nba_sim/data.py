@@ -236,6 +236,50 @@ def _fetch_roster(team_id: int, season: str) -> list[dict[str, Any]]:
     return with_retries(f"CommonTeamRoster({team_id},{season})", call)
 
 
+def _fetch_draft_picks(season: str) -> dict[int, int]:
+    """
+    Map player_id → overall draft pick for the draft year that feeds `season`.
+    Season 2026-27 ← draft 2026. Cached on disk.
+    """
+    try:
+        draft_year = int(season.split("-")[0])
+    except (TypeError, ValueError):
+        return {}
+    cache_key = f"draft_{draft_year}"
+    cached = _read_cache(cache_key, use_cache=True)
+    if isinstance(cached, dict) and cached.get("by_id"):
+        return {int(k): int(v) for k, v in cached["by_id"].items()}
+
+    from nba_api.stats.endpoints import drafthistory
+
+    def call():
+        ep = drafthistory.DraftHistory(
+            league_id="00",
+            season_year_nullable=str(draft_year),
+            **endpoint_kwargs(),
+        )
+        return ep.get_normalized_dict().get("DraftHistory") or []
+
+    try:
+        rows = with_retries(f"DraftHistory({draft_year})", call)
+    except Exception as exc:  # noqa: BLE001
+        _say(f"  draft history warning: {exc}")
+        return {}
+
+    by_id: dict[int, int] = {}
+    for row in rows:
+        try:
+            pid = int(row.get("PERSON_ID") or row.get("PLAYER_ID") or 0)
+            overall = int(float(row.get("OVERALL_PICK") or 0))
+        except (TypeError, ValueError):
+            continue
+        if pid and overall > 0:
+            by_id[pid] = overall
+    _write_cache(cache_key, {"draft_year": draft_year, "by_id": by_id})
+    _say(f"  draft {draft_year}: {len(by_id)} picks indexed")
+    return by_id
+
+
 def _player_from_row(
     row: dict[str, Any], team_abbr: str, *, prior_season: str
 ) -> PlayerSeason:
@@ -505,11 +549,17 @@ def _build_team_with_fallback(
 
         rook_row = None
         if is_rookie and not has_last:
-            rook_row = rookie_prior_row(position, player_id=pid, name=name)
+            pick = meta.draft_pick if meta else None
+            rook_row = rookie_prior_row(
+                position, player_id=pid, name=name, overall_pick=pick
+            )
         elif not has_last and not has_reg and not has_pre:
             # On roster but no NBA history and not marked rookie — still need a prior
             if roster_ids is not None and pid in roster_ids:
-                rook_row = rookie_prior_row(position, player_id=pid, name=name)
+                pick = meta.draft_pick if meta else None
+                rook_row = rookie_prior_row(
+                    position, player_id=pid, name=name, overall_pick=pick
+                )
                 is_rookie = True  # treat as prospect for provenance
 
         if allow_blend:
@@ -755,6 +805,10 @@ def _load_live(
     roster_away: set[int] | None = None
     meta_home: dict[int, RosterMeta] = {}
     meta_away: dict[int, RosterMeta] = {}
+    draft_picks: dict[int, int] = {}
+    if allow_fallback:
+        draft_picks = _fetch_draft_picks(season)
+
     try:
         rh = _fetch_roster(int(home["id"]), season)
         roster_home = {int(r["PLAYER_ID"]) for r in rh}
@@ -785,6 +839,10 @@ def _load_live(
             except Exception as exc2:  # noqa: BLE001
                 _say(f"  roster away fallback warning: {exc2}")
                 roster_away = None
+
+    for meta in list(meta_home.values()) + list(meta_away.values()):
+        if meta.player_id in draft_picks:
+            meta.draft_pick = draft_picks[meta.player_id]
 
     primary_players = player_rows or []
     primary_teams = team_rows or []
@@ -959,6 +1017,7 @@ def load_matchup(
     use_cache: bool = True,
     force_fixtures: bool = False,
     allow_fallback: bool = True,
+    fixture_path: str | Path | None = None,
 ) -> MatchupData:
     """
     Pull live roster/stats priors for the matchup.
@@ -969,15 +1028,18 @@ def load_matchup(
     last-season fill if still < MIN_USABLE_PLAYERS.
     Fixtures: ONLY if force_fixtures=True. Never silent fixture fallback.
     """
-    if force_fixtures:
+    if force_fixtures or fixture_path:
+        path = Path(fixture_path) if fixture_path else None
         _say(
-            "WARNING: --fixtures uses bundled OUTDATED sample data "
-            "(not live 2026-27). For real sims, omit --fixtures."
+            "WARNING: fixture mode uses OUTDATED sample data "
+            "(not live 2026-27). For real sims, omit --fixtures/--fixture-file."
         )
-        fx = load_fixture()
-        if home["abbreviation"] != "SAC" or away["abbreviation"] != "LAC":
+        fx = load_fixture(path)
+        if path is None and (
+            home["abbreviation"] != "SAC" or away["abbreviation"] != "LAC"
+        ):
             _say(
-                f"NOTE: --fixtures always loads bundled SAC/LAC sample "
+                f"NOTE: default --fixtures loads bundled SAC/LAC sample "
                 f"(requested {away['abbreviation']} @ {home['abbreviation']})."
             )
         fx.game_date = game_date.isoformat() if game_date else None

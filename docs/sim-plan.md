@@ -70,7 +70,7 @@ Designed for the **start of 2026-27** (and any early-GP window). Player rate pri
 | Current regular S2D | `GP_reg` | DateTo = tip−1 when dated |
 | Last season regular | `K_LAST = 25` if usable last-season row | Full prior season; no tip box |
 | Preseason | `K_PRE = 6 × min(GP_pre, 4)/4` | `season_type=Pre Season` for current label |
-| Rookie expected production | `K_ROOKIE = 15` | Position G/F/C archetype when EXP=`R` / no NBA last season |
+| Rookie expected production | `K_ROOKIE = 15` | Position G/F/C archetype when EXP=`R` / no NBA last season; scaled by draft overall pick (lottery > late) when `DraftHistory` is available |
 
 At GP_reg≈0 a veteran is ~last (+ pre if available). A rookie is ~archetype + preseason. As regular GP grows, weight shifts to live S2D.
 

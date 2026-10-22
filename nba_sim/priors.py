@@ -145,6 +145,7 @@ class RosterMeta:
     position: str = ""
     exp: str = ""
     is_rookie: bool = False
+    draft_pick: int | None = None
 
 
 def normalize_position(pos: str | None) -> str:
@@ -183,9 +184,37 @@ def is_rookie_exp(exp: Any) -> bool:
         return False
 
 
-def rookie_prior_row(position: str, *, player_id: int = 0, name: str = "Rookie") -> dict[str, Any]:
+def draft_production_scale(overall_pick: int | None) -> float:
+    """
+    Scale expected production by draft capital.
+    Lottery stars > mid-first > late-first > second round / undrafted.
+    """
+    if overall_pick is None or overall_pick <= 0:
+        return 0.85  # undrafted / unknown — below average rookie
+    if overall_pick <= 5:
+        return 1.25
+    if overall_pick <= 14:
+        return 1.10
+    if overall_pick <= 30:
+        return 1.00
+    if overall_pick <= 45:
+        return 0.90
+    return 0.80
+
+
+def rookie_prior_row(
+    position: str,
+    *,
+    player_id: int = 0,
+    name: str = "Rookie",
+    overall_pick: int | None = None,
+) -> dict[str, Any]:
     slot = normalize_position(position)
     base = dict(ROOKIE_BY_POSITION[slot])
+    scale = draft_production_scale(overall_pick)
+    # Scale counting stats + minutes; keep shooting percentages stable.
+    for k in ("min", "pts", "reb", "oreb", "dreb", "ast", "tov", "fga", "fgm", "fg3a", "fg3m", "fta"):
+        base[k] = float(base[k]) * scale
     return {
         "PLAYER_ID": player_id,
         "PLAYER_NAME": name,
@@ -208,6 +237,8 @@ def rookie_prior_row(position: str, *, player_id: int = 0, name: str = "Rookie")
         "FTM": base["fta"] * base["ft_pct"],
         "FT_PCT": base["ft_pct"],
         "_rookie_slot": slot,
+        "_draft_pick": overall_pick,
+        "_draft_scale": scale,
     }
 
 
