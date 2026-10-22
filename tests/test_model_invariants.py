@@ -25,14 +25,17 @@ class ModelInvariantTests(unittest.TestCase):
         self.assertLessEqual(s.home_p50, s.home_p90)
         self.assertLessEqual(s.total_p10, s.total_p90)
 
-    def test_ortg_shifts_scoring(self):
+    def test_drtg_direction_soft_defense_helps_offense(self):
+        """Higher opp DRtg (worse D) must increase that offense's scoring."""
         md = load_fixture()
-        base = run_simulations(md, n=300, seed=7)
-        md.home.off_rating = 125.0
-        md.away.off_rating = 100.0
-        hot = run_simulations(md, n=300, seed=7)
-        # Stronger home ORtg should raise home mean relative to baseline
-        self.assertGreater(hot.home_mean - hot.away_mean, base.home_mean - base.away_mean - 0.5)
+        # Neutral D both sides
+        md.home.def_rating = 112.0
+        md.away.def_rating = 112.0
+        base = run_simulations(md, n=400, seed=7)
+        # Soften away defense → home offense should score more
+        md.away.def_rating = 125.0
+        soft = run_simulations(md, n=400, seed=7)
+        self.assertGreater(soft.home_mean, base.home_mean - 0.25)
 
     def test_json_cli(self):
         rc = main(

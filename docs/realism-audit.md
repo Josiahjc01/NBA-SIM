@@ -21,7 +21,8 @@ Concrete pass for data leaks, bias, and accounting inconsistencies. Findings bel
 |-------|--------|-------|
 | Home court | **Justified single mechanism** | `HOME_FG_BOOST = +0.015` absolute on make% for home offense only. |
 | Pace double-count | **Fixed** | Game possessions = `avg(home.pace, away.pace) + noise` once. Player averages inform **shares**. |
-| Opponent adjustment | **Once** | FG% / 3P% scaled by `league_def / opp_def` clipped to `[0.94, 1.06]`. |
+| Opponent adjustment | **Once (direction fixed)** | FG% / 3P% × `opp_DRtg / league` clipped to `[0.94, 1.06]`. Higher DRtg = worse D = offense boost. (Earlier `league/opp` was inverted.) |
+| Team ORtg on FG | **Not re-applied** | ORtg already embedded in player rates; multiplying again double-counted and shifted win%. |
 | Equal minutes / equal usage | **Avoided** | Rotation = top 8–10 by MIN (post-injury). Minutes ∝ season MIN → **240**. Usage ∝ `FGA × √MIN`. |
 | Early-season blend | **Documented** | GP-weighted mix of last season / preseason / S2D / rookie archetype; provenance + weights printed every run. |
 

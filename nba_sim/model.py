@@ -169,14 +169,16 @@ def _build_context(team: TeamSeason, opp_def: float, league_def: float = 112.0) 
     oreb_w = _safe_norm(oreb_raw * mins)
     dreb_w = _safe_norm(dreb_raw * mins)
 
-    # Opponent defensive adjustment: shrink FG toward mean by opp DRtg vs league.
-    # Applied once here — not again on team pace.
-    def_adj = _clip(league_def / max(opp_def, 90.0), 0.94, 1.06)
-    # Team offensive rating vs league: mild finishing boost/penalty (was fetched unused).
-    # Keep narrower than defense adj to avoid double-counting talent already in player FG%.
-    team_ortg = float(team.off_rating) if team.off_rating > 0 else league_def
-    off_adj = _clip(team_ortg / league_def, 0.97, 1.03)
-    shot_adj = def_adj * off_adj
+    # Opponent defensive adjustment. NBA DEF_RATING = pts allowed / 100
+    # (higher = worse defense). Facing a soft defense must RAISE make%; facing
+    # a stingy defense must LOWER it → adj = opp_drtg / league (NOT inverted).
+    # Historical bug used league/opp, which suppressed offense vs bad D and
+    # inflated it vs good D — flipping Clippers/Kings edges incorrectly.
+    def_adj = _clip(max(opp_def, 90.0) / league_def, 0.94, 1.06)
+    # Team ORtg is already largely reflected in player FG%/usage — do not
+    # multiply make% by ORtg again. Optional fatigue_fg_mult (B2B) still applies.
+    fatigue = float(getattr(team, "fatigue_fg_mult", 1.0) or 1.0)
+    shot_adj = def_adj * _clip(fatigue, 0.95, 1.0)
 
     fg2, fg3, three_rate, ft = [], [], [], []
     tov_num = tov_den = 0.0
@@ -507,7 +509,8 @@ def _audit_batch(results: Sequence[GameResult], matchup: MatchupData) -> dict:
         "mean_poss_proxy_minus_allotment": float(np.mean(poss_proxy_err)) if poss_proxy_err else 0.0,
         "home_court_mechanism": f"+{HOME_FG_BOOST:.3f} absolute FG for home only",
         "pace_mechanism": "single game pace = avg(team paces); player rates are shares",
-        "ortg_mechanism": "team ORtg vs league scales FG/3P once in [0.97,1.03] with DRtg adj",
+        "drtg_mechanism": "FG/3P × clip(opp_DRtg/league, 0.94, 1.06); higher DRtg (worse D) boosts offense",
+        "ortg_mechanism": "team ORtg not re-applied to FG (already in player rates; avoids double-count)",
         "tie_break": f"up to {MAX_OT_PERIODS} OT periods ({OT_POSSESSIONS} poss/side); then +1 coin-flip",
         "data_note": f"priors from matchup source={matchup.source} season={matchup.season}",
     }

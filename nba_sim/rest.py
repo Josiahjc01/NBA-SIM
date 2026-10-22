@@ -43,10 +43,9 @@ def apply_b2b_flags(
             continue
         if played:
             team.pace = float(max(88.0, team.pace + B2B_PACE_DELTA))
-            # Encode B2B into off_rating slightly downward (model uses ORtg)
-            team.off_rating = float(max(95.0, team.off_rating * B2B_FG_MULT))
+            team.fatigue_fg_mult = float(B2B_FG_MULT)
             notes.append(
                 f"{team.abbreviation} ({side}) B2B after {yesterday.isoformat()}: "
-                f"pace{B2B_PACE_DELTA:+.1f}, ORtg×{B2B_FG_MULT}"
+                f"pace{B2B_PACE_DELTA:+.1f}, FG×{B2B_FG_MULT}"
             )
     return notes

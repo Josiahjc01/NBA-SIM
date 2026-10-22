@@ -97,6 +97,8 @@ class TeamSeason:
     players: list[PlayerSeason] = field(default_factory=list)
     # Season label used for team advanced stats (pace/ORtg/DRtg).
     team_stats_season: str = ""
+    # Multiplier on FG/3P make% (e.g. B2B fatigue); default 1.0.
+    fatigue_fg_mult: float = 1.0
 
 
 @dataclass
@@ -888,6 +890,7 @@ def _team_from_dict(d: dict[str, Any]) -> TeamSeason:
         def_rating=float(d.get("def_rating", 112)),
         players=players,
         team_stats_season=str(d.get("team_stats_season") or ""),
+        fatigue_fg_mult=float(d.get("fatigue_fg_mult", 1.0) or 1.0),
     )
 
 
