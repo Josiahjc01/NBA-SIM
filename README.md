@@ -47,7 +47,7 @@ python -m nba_sim --check-data          # same
 python -m nba_sim doctor --json         # machine-readable
 ```
 
-Required feeds (player/team stats, roster, scoreboard) must pass. Optional feeds (hustle, PtDefend, Four Factors, shot zones, last-N, lineups, clutch, on/off, ESPN injuries/odds, NBA CDN) warn and degrade gracefully. After upgrades use `--no-cache` once (schema **`blendv10`**). Text reports end with a **Top 5 wagers** section.
+Required feeds (player/team stats, roster, scoreboard) must pass. Optional feeds (hustle, PtDefend, Four Factors, shot zones, last-N, lineups, clutch, on/off, ESPN injuries/odds, NBA CDN) warn and degrade gracefully. After upgrades use `--no-cache` once (schema **`blendv10`**). Text reports end with a **Top 5 wagers** section (advisory). **v1.0.0** — see `RELEASE.md`.
 
 ### Live fetch env tips (`stats.nba.com`)
 
