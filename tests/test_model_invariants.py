@@ -44,6 +44,12 @@ class ModelInvariantTests(unittest.TestCase):
         self.assertLess(stingy, 1.0)
         self.assertGreater(soft, stingy)
 
+    def test_lac_sac_fixture_not_regressed_to_inverted_era(self):
+        """After DRtg fix, LAC away should not sit near the old ~36% band."""
+        s = run_simulations(load_fixture(), n=2000, seed=42)
+        self.assertGreater(s.away_win_pct, 0.45)  # was ~0.36 with inverted adj
+        self.assertLess(s.away_win_pct, 0.60)
+
     def test_json_cli(self):
         rc = main(
             [
