@@ -43,6 +43,12 @@ ESPN_TEAM_INJURY_URL = (
     "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/"
     "{team_id}/injury"
 )
+# Official NBA CDN — often 403 in cloud/agent egress; best-effort only.
+# Never use liveData boxscore inactive lists (same-game leak).
+NBA_CDN_INJURY_URLS = (
+    "https://cdn.nba.com/static/json/liveData/injuries/injuries_all.json",
+    "https://www.nba.com/injury-report",  # HTML probe only — parse skipped if not JSON
+)
 
 # ESPN site team ids (not NBA TEAM_ID) — used for per-team injury pages
 ESPN_TEAM_IDS: dict[str, str] = {
@@ -312,6 +318,108 @@ def fetch_team_injuries(abbr: str, timeout: float = 20.0) -> list[InjuryEntry]:
     return _parse_team_injury_page(payload, abbr.upper())
 
 
+def _parse_nba_cdn_injuries(payload: Any) -> list[InjuryEntry]:
+    """Best-effort parse of NBA CDN injury JSON (schema varies)."""
+    entries: list[InjuryEntry] = []
+    if not isinstance(payload, dict):
+        return entries
+    # Common shapes: {league: {standard: [...]}} or {injuries: [...]}
+    rows = (
+        payload.get("injuries")
+        or (payload.get("league") or {}).get("standard")
+        or payload.get("data")
+        or []
+    )
+    if isinstance(rows, dict):
+        rows = rows.get("players") or rows.get("injuries") or []
+    for item in rows or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(
+            item.get("playerName")
+            or item.get("name")
+            or (item.get("player") or {}).get("fullName")
+            or ""
+        )
+        status = str(
+            item.get("status")
+            or item.get("injuryStatus")
+            or item.get("description")
+            or ""
+        )
+        abbr = str(
+            item.get("teamAbbreviation")
+            or item.get("teamAbbr")
+            or (item.get("team") or {}).get("triCode")
+            or (item.get("team") or {}).get("abbreviation")
+            or ""
+        ).upper()
+        if not name:
+            continue
+        entries.append(
+            InjuryEntry(
+                name=name,
+                team_abbr=abbr,
+                status=status,
+                mult=_status_mult(status),
+                detail=str(item.get("description") or item.get("detail") or "")[:120],
+                source="nba-cdn",
+            )
+        )
+    return entries
+
+
+def fetch_nba_official_injuries(timeout: float = 12.0) -> tuple[list[InjuryEntry], str | None]:
+    """
+    Best-effort official NBA injury report.
+
+    Returns (entries, error). CDN / www.nba.com often 403 — callers merge
+    ESPN as primary. Never scrapes tip-box inactive lists.
+    """
+    last_err: str | None = None
+    for url in NBA_CDN_INJURY_URLS:
+        if "injury-report" in url and not url.endswith(".json"):
+            # HTML page — connectivity probe only
+            try:
+                req = urllib.request.Request(
+                    url,
+                    headers={
+                        "User-Agent": _UA,
+                        "Accept": "text/html,application/json",
+                        "Referer": "https://www.nba.com/",
+                    },
+                )
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    code = getattr(resp, "status", 200)
+                if code and int(code) >= 400:
+                    last_err = f"nba-official HTML {code}"
+                else:
+                    last_err = "nba-official HTML reachable but JSON feed blocked — skipped parse"
+                continue
+            except Exception as exc:  # noqa: BLE001
+                last_err = f"nba-official: {exc}"
+                continue
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "User-Agent": _UA,
+                    "Accept": "application/json",
+                    "Origin": "https://www.nba.com",
+                    "Referer": "https://www.nba.com/",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+            rows = _parse_nba_cdn_injuries(payload)
+            if rows:
+                return rows, None
+            last_err = "nba-cdn: empty parse"
+        except Exception as exc:  # noqa: BLE001
+            last_err = f"nba-cdn: {exc}"
+    return [], last_err
+
+
 def fetch_multi_source_injuries(
     *,
     team_abbrs: Iterable[str] | None = None,
@@ -404,6 +512,14 @@ def fetch_multi_source_injuries(
             buckets.append(rows)
         elif err_t:
             result.sources_failed.append(err_t)
+
+    # Official NBA CDN — best-effort; 403 is expected in many envs
+    nba_rows, nba_err = fetch_nba_official_injuries(timeout=min(timeout, 12.0))
+    if nba_rows:
+        result.sources_ok.append(f"nba-cdn({len(nba_rows)})")
+        buckets.append(nba_rows)
+    elif nba_err:
+        result.sources_failed.append(nba_err)
 
     result.entries = merge_injury_entries(buckets)
     if not result.entries and not result.sources_ok:

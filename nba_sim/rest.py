@@ -1,11 +1,15 @@
-"""Back-to-back / rest / travel adjustments (v1.1).
+"""Back-to-back / rest / travel / load-management adjustments.
 
-When a tip date is known, check yesterday's (and tip−3) schedule (US/Eastern).
-If a team played yesterday, apply fatigue to finishing (FG) and pace.
-Road B2B and 3-in-4 get slightly stronger penalties.
+When a tip date is known, check yesterday's (and tip−3 / tip−5) schedule
+(US/Eastern). If a team played yesterday, apply fatigue to finishing (FG)
+and pace. Road B2B and 3-in-4 get slightly stronger penalties.
+
+Load management beyond B2B (best-effort, schedule-only):
+  - 4-in-6 denseness (played tip−1 and ≥2 of tip−3..tip−5)
+  - Star minute soft-cut on road B2B / dense stretches (top-2 by MIN ≥ 32)
 
 Does **not** read box scores — only ScoreboardV2 GameHeader presence / home-away.
-Disable with --no-rest.
+Disable with --no-rest. Never uses live in-game state.
 """
 
 from __future__ import annotations
@@ -20,6 +24,9 @@ B2B_PACE_DELTA = -1.0
 B2B_ROAD_PACE_DELTA = -1.5
 THREE_IN_FOUR_FG_MULT = 0.990  # played tip-1 and tip-3 (3 games in 4 nights)
 THREE_IN_FOUR_EXTRA = 0.005  # additional FG haircut stacked on B2B
+FOUR_IN_SIX_EXTRA = 0.004  # denseness beyond 3-in-4
+STAR_LOAD_MIN_CUT = 0.92  # top-2 high-minute players on road B2B / 4-in-6
+STAR_MIN_THRESHOLD = 32.0
 
 
 def _slate_appearance(
@@ -45,13 +52,77 @@ def team_on_slate(team_id: int, day: date, *, use_fixtures: bool = False) -> boo
     return played
 
 
+def _count_recent_games(
+    team_id: int,
+    tip: date,
+    *,
+    lookback: int = 5,
+    use_fixtures: bool = False,
+) -> int:
+    """How many of the previous `lookback` calendar nights the team played."""
+    n = 0
+    for d in range(1, lookback + 1):
+        try:
+            played, _ = _slate_appearance(
+                team_id, tip - timedelta(days=d), use_fixtures=use_fixtures
+            )
+        except Exception:  # noqa: BLE001
+            continue
+        if played:
+            n += 1
+    return n
+
+
+def apply_load_management(
+    team: TeamSeason,
+    *,
+    road_b2b: bool,
+    four_in_six: bool,
+) -> list[str]:
+    """
+    Soft minute cuts for top-2 high-minute players on dense / road-B2B nights.
+    Schedule-density only — not injury speculation or live inactive lists.
+    """
+    notes: list[str] = []
+    if not (road_b2b or four_in_six):
+        return notes
+    ranked = sorted(
+        [p for p in team.players if float(getattr(p, "min", 0.0) or 0.0) > 0],
+        key=lambda p: float(p.min),
+        reverse=True,
+    )
+    cut = 0
+    for p in ranked[:2]:
+        if float(p.min) < STAR_MIN_THRESHOLD:
+            continue
+        if getattr(p, "injury_mult", 1.0) is not None and float(
+            getattr(p, "injury_mult", 1.0) or 1.0
+        ) <= 0.0:
+            continue
+        before = float(p.min)
+        p.min = before * STAR_LOAD_MIN_CUT
+        p.load_managed = True
+        cut += 1
+        reason = "road-B2B" if road_b2b else "4-in-6"
+        notes.append(
+            f"{team.abbreviation} load-mgmt {p.name}: min {before:.1f}→{p.min:.1f} "
+            f"(×{STAR_LOAD_MIN_CUT} {reason})"
+        )
+    if cut == 0 and (road_b2b or four_in_six):
+        notes.append(
+            f"{team.abbreviation} load-mgmt: dense slate but no star ≥"
+            f"{STAR_MIN_THRESHOLD:.0f} MIN to trim"
+        )
+    return notes
+
+
 def apply_b2b_flags(
     matchup: MatchupData,
     tip: date,
     *,
     use_fixtures: bool = False,
 ) -> list[str]:
-    """Mark B2B / travel / 3-in-4; mutate TeamSeason fatigue + pace."""
+    """Mark B2B / travel / 3-in-4 / 4-in-6 + star load-mgmt; mutate fatigue + pace."""
     yesterday = tip - timedelta(days=1)
     three_ago = tip - timedelta(days=3)
     notes: list[str] = []
@@ -65,6 +136,7 @@ def apply_b2b_flags(
             continue
 
         played_3 = False
+        recent = 0
         if played_y:
             try:
                 played_3, _ = _slate_appearance(
@@ -72,8 +144,19 @@ def apply_b2b_flags(
                 )
             except Exception:  # noqa: BLE001
                 played_3 = False
+            recent = _count_recent_games(
+                team.team_id, tip, lookback=5, use_fixtures=use_fixtures
+            )
 
+        four_in_six = played_y and recent >= 3  # tip-1 plus ≥2 of tip-2..tip-5
         if not played_y:
+            # Still check denseness without B2B (e.g. played tip-2 and tip-4)
+            if recent >= 3:
+                notes.extend(
+                    apply_load_management(
+                        team, road_b2b=False, four_in_six=True
+                    )
+                )
             continue
 
         # Travel: yesterday was a road game, or tonight is away after any B2B
@@ -86,6 +169,9 @@ def apply_b2b_flags(
         if played_3:
             fg = float(max(0.96, fg - THREE_IN_FOUR_EXTRA))
             tags.append("3-in-4")
+        if four_in_six:
+            fg = float(max(0.955, fg - FOUR_IN_SIX_EXTRA))
+            tags.append("4-in-6")
 
         # Travel miles into tip (away already stamped; home may have flown yesterday)
         from nba_sim.signals import travel_fatigue_fg_mult, travel_miles
@@ -112,5 +198,10 @@ def apply_b2b_flags(
             f"{yesterday.isoformat()}"
             + (f" (was {role_y})" if role_y else "")
             + f": pace{pace_d:+.1f}, FG×{team.fatigue_fg_mult:.3f}"
+        )
+        notes.extend(
+            apply_load_management(
+                team, road_b2b=road_stretch, four_in_six=four_in_six
+            )
         )
     return notes

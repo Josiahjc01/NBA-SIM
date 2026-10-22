@@ -45,7 +45,7 @@ CACHE_DIR = Path(__file__).resolve().parents[1] / ".cache"
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 CACHE_TTL_SECONDS = 6 * 60 * 60  # shorter so live S2D stays fresh
 # Matchup aggregate cache schema — bump when TeamSeason / blend inputs change.
-MATCHUP_CACHE_SCHEMA = "blendv9"
+MATCHUP_CACHE_SCHEMA = "blendv10"
 
 # When True, suppress informational prints (warnings for hard failures still raise).
 _QUIET = False
@@ -108,6 +108,12 @@ class PlayerSeason:
     pt_dfg: float = 0.0  # player defended FG% (overall)
     pt_dfg_three: float = 0.0
     clutch_fg_mult: float = 1.0
+    # v0.7 / v1 gap fields
+    is_starter: bool = False
+    garbage_filtered: bool = False
+    load_managed: bool = False
+    onoff_def_rtg: float = 0.0
+    onoff_net: float = 0.0
 
 
 @dataclass
@@ -153,7 +159,9 @@ class TeamSeason:
     foul_rate: float = 0.0  # derived shooting-foul rate; 0 → model default
     # v0.6
     lineup_net: float = 0.0  # best 5-man NET_RATING (0 = unknown)
-    game_mode: str = ""  # Regular Season | Playoffs | IST/NBA Cup
+    game_mode: str = ""  # Regular Season | Playoffs | PlayIn | IST/NBA Cup
+    onoff_def_adj: float = 0.0
+    ref_foul_mult: float = 1.0
 
 
 @dataclass
@@ -171,6 +179,7 @@ class MatchupData:
     enrichment_notes: list[str] = field(default_factory=list)
     regime_notes: list[str] = field(default_factory=list)
     line_notes: list[str] = field(default_factory=list)
+    ref_notes: list[str] = field(default_factory=list)
     game_mode: str = "Regular Season"
     matchup_notes: list[str] = field(default_factory=list)
     # Loud provenance for optional feeds (hustle / advanced / PtDefend / coaches)
@@ -2080,6 +2089,7 @@ def _matchup_to_dict(md: MatchupData) -> dict[str, Any]:
         "enrichment_notes": md.enrichment_notes,
         "regime_notes": md.regime_notes,
         "line_notes": md.line_notes,
+        "ref_notes": md.ref_notes,
         "game_mode": md.game_mode,
         "matchup_notes": md.matchup_notes,
         "feed_notes": md.feed_notes,
@@ -2109,6 +2119,11 @@ def _team_from_dict(d: dict[str, Any]) -> TeamSeason:
         kwargs.setdefault("pt_dfg", 0.0)
         kwargs.setdefault("pt_dfg_three", 0.0)
         kwargs.setdefault("clutch_fg_mult", 1.0)
+        kwargs.setdefault("is_starter", False)
+        kwargs.setdefault("garbage_filtered", False)
+        kwargs.setdefault("load_managed", False)
+        kwargs.setdefault("onoff_def_rtg", 0.0)
+        kwargs.setdefault("onoff_net", 0.0)
         allowed = set(PlayerSeason.__dataclass_fields__)
         kwargs = {k: v for k, v in kwargs.items() if k in allowed}
         players.append(PlayerSeason(**kwargs))
@@ -2147,6 +2162,8 @@ def _team_from_dict(d: dict[str, Any]) -> TeamSeason:
         foul_rate=float(d.get("foul_rate") or 0.0),
         lineup_net=float(d.get("lineup_net") or 0.0),
         game_mode=str(d.get("game_mode") or ""),
+        onoff_def_adj=float(d.get("onoff_def_adj") or 0.0),
+        ref_foul_mult=float(d.get("ref_foul_mult") or 1.0),
     )
     return _finalize_team_context(team, coach_name=team.coach_name)
 
@@ -2182,6 +2199,7 @@ def _matchup_from_dict(d: dict[str, Any], source: str | None = None) -> MatchupD
         enrichment_notes=list(d.get("enrichment_notes") or []),
         regime_notes=list(d.get("regime_notes") or []),
         line_notes=list(d.get("line_notes") or []),
+        ref_notes=list(d.get("ref_notes") or []),
         game_mode=str(d.get("game_mode") or "Regular Season"),
         matchup_notes=notes,
         feed_notes=list(d.get("feed_notes") or []),

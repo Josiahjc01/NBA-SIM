@@ -1,4 +1,4 @@
-"""Optional pre-tip enrichment for v0.6 accuracy levers.
+"""Optional pre-tip enrichment for v0.6/v0.7 accuracy levers.
 
 Features (all soft / degrade with loud notes; never tip-game boxes):
   - Last-N projected minutes (LeagueDashPlayerStats LastNGames)
@@ -6,6 +6,9 @@ Features (all soft / degrade with loud notes; never tip-game boxes):
   - Lineup net ratings (LeagueDashLineups, group_quantity=5)
   - True SoS from recent slate opponents' NET_RATING
   - Clutch splits (LeagueDashPlayerClutch) with heavy shrink / skip if thin
+  - Garbage-time soft filter (fringe rotation FG/min haircut)
+  - Starter confirmation from last-N / evidence minutes
+  - On/Off defensive NET (TeamPlayerOnOffSummary) with heavy shrink
 """
 
 from __future__ import annotations
@@ -20,6 +23,14 @@ LAST_N_MIN_GP = 2  # below this → skip last-N blend
 CLUTCH_MIN_FGA = 15  # below → skip clutch adj for player
 CLUTCH_SHRINK_K = 40.0  # pseudo-count toward league/no-op
 LINEUP_MIN_MIN = 40.0  # minutes for a 5-man unit to count
+GARBAGE_FRINGE_RANK = 8  # 9th+ by minutes → soft haircut
+GARBAGE_MIN_CUT = 0.92
+GARBAGE_FG_SHRINK = 0.40  # blend weight toward team mean FG for fringe
+STARTER_COUNT = 5
+STARTER_MIN_FLOOR_MULT = 1.04  # mild bump once confirmed
+ONOFF_MIN_MIN = 100.0  # on-court minutes before trusting DEF_NET
+ONOFF_SHRINK_K = 200.0
+ONOFF_NET_CLIP = 3.0  # max pts/100 applied to team DRtg
 
 
 def _f(row: dict[str, Any], *keys: str, default: float = 0.0) -> float:
@@ -420,6 +431,206 @@ def apply_true_sos(
     return notes
 
 
+def apply_garbage_time_filter(matchup: Any) -> list[str]:
+    """
+    Soft garbage-time filter without a dedicated NBA Stats board.
+
+    Fringe rotation (rank > GARBAGE_FRINGE_RANK by minutes, or MIN < 15)
+    get a minutes haircut and FG% pulled toward the team's rotation mean —
+    deep-bench rates are often garbage-inflated. Loud provenance; no tip boxes.
+    """
+    notes: list[str] = []
+    n_adj = 0
+    for side in (matchup.home, matchup.away):
+        ranked = sorted(
+            [p for p in side.players if float(getattr(p, "min", 0.0) or 0.0) > 0],
+            key=lambda p: float(p.min),
+            reverse=True,
+        )
+        if len(ranked) < 5:
+            continue
+        core = ranked[: min(GARBAGE_FRINGE_RANK, len(ranked))]
+        core_fg = [float(p.fg_pct) for p in core if float(getattr(p, "fg_pct", 0) or 0) > 0]
+        team_fg = sum(core_fg) / len(core_fg) if core_fg else 0.46
+        for i, p in enumerate(ranked):
+            fringe = i >= GARBAGE_FRINGE_RANK or float(p.min) < 15.0
+            if not fringe or i < 5:
+                continue
+            before_m = float(p.min)
+            before_fg = float(getattr(p, "fg_pct", 0.0) or 0.0)
+            p.min = before_m * GARBAGE_MIN_CUT
+            if before_fg > 0:
+                p.fg_pct = (1.0 - GARBAGE_FG_SHRINK) * before_fg + GARBAGE_FG_SHRINK * team_fg
+            p.garbage_filtered = True
+            n_adj += 1
+    notes.append(
+        f"garbage-time filter: soft fringe haircut on {n_adj} players "
+        f"(rank>{GARBAGE_FRINGE_RANK} or MIN<15; min×{GARBAGE_MIN_CUT}, "
+        f"FG shrink w={GARBAGE_FG_SHRINK})"
+    )
+    return notes
+
+
+def apply_starter_confirmation(matchup: Any) -> list[str]:
+    """
+    Confirm projected starters from last-N / evidence minutes (top 5).
+
+    Mild minute floor bump for confirmed starters; tags provenance.
+    Does not invent depth charts or scrape tip-day inactive lists.
+    """
+    notes: list[str] = []
+    for side in (matchup.home, matchup.away):
+        ranked = sorted(
+            [p for p in side.players if float(getattr(p, "min", 0.0) or 0.0) > 0],
+            key=lambda p: max(
+                float(getattr(p, "lastn_min", 0.0) or 0.0),
+                float(getattr(p, "evidence_min", 0.0) or 0.0),
+                float(p.min),
+            ),
+            reverse=True,
+        )
+        names: list[str] = []
+        for p in ranked[:STARTER_COUNT]:
+            p.is_starter = True
+            before = float(p.min)
+            p.min = before * STARTER_MIN_FLOOR_MULT
+            names.append(p.name)
+        notes.append(
+            f"starters {side.abbreviation}: "
+            + (", ".join(names) if names else "none")
+            + f" (top {STARTER_COUNT} by last-N/evidence MIN; ×{STARTER_MIN_FLOOR_MULT})"
+        )
+    return notes
+
+
+def fetch_team_onoff_summary(
+    team_id: int,
+    season: str,
+    date_to: str | None,
+    *,
+    season_type: str = "Regular Season",
+    use_cache: bool = True,
+) -> list[dict[str, Any]]:
+    from nba_api.stats.endpoints import teamplayeronoffsummary
+
+    label = f"TeamPlayerOnOffSummary({team_id},{season},{season_type})"
+    cache_key = (
+        f"ep_onoff_{team_id}_{season}_"
+        f"{season_type.replace(' ', '')}_{date_to or 'latest'}"
+    )
+
+    def call():
+        kwargs: dict[str, Any] = endpoint_kwargs(
+            {
+                "team_id": int(team_id),
+                "season": season,
+                "season_type_all_star": season_type,
+                "per_mode_detailed": "Totals",
+                "measure_type_detailed_defense": "Advanced",
+            }
+        )
+        if date_to and season_type in ("Regular Season", "Playoffs"):
+            kwargs["date_to_nullable"] = date_to
+        ep = teamplayeronoffsummary.TeamPlayerOnOffSummary(**kwargs)
+        payload = ep.get_normalized_dict()
+        # Prefer OnCourt summary tables
+        for key in (
+            "PlayersOnCourtTeamPlayerOnOffSummary",
+            "OverallTeamPlayerOnOffSummary",
+            "PlayersOffCourtTeamPlayerOnOffSummary",
+        ):
+            rows = payload.get(key)
+            if rows:
+                return rows
+        # Fall back to first non-empty
+        for rows in payload.values():
+            if isinstance(rows, list) and rows:
+                return rows
+        return []
+
+    return with_retries(label, call, use_cache=use_cache, cache_key=cache_key)
+
+
+def apply_onoff_defense(
+    matchup: Any,
+    on_rows_by_team: dict[int, list[dict[str, Any]]] | None,
+) -> list[str]:
+    """
+    Soft team DRtg nudge from minutes-weighted player On-court DEF_RATING / NET.
+
+    Heavy shrink; skips thin samples. Never uses tip-game on/off.
+    """
+    notes: list[str] = []
+    if not on_rows_by_team:
+        notes.append("on/off D: unavailable")
+        return notes
+
+    for side in (matchup.home, matchup.away):
+        rows = on_rows_by_team.get(int(side.team_id)) or []
+        if not rows:
+            notes.append(f"on/off D {side.abbreviation}: no rows")
+            continue
+        # Index by player; prefer VS_PLAYER_ID / PLAYER_ID
+        by_pid: dict[int, dict[str, Any]] = {}
+        for row in rows:
+            try:
+                pid = int(
+                    row.get("VS_PLAYER_ID")
+                    or row.get("PLAYER_ID")
+                    or row.get("ON_COURT_PLAYER_ID")
+                    or 0
+                )
+            except (TypeError, ValueError):
+                continue
+            if pid:
+                by_pid[pid] = row
+        weighted_def = 0.0
+        weight = 0.0
+        n = 0
+        for p in side.players:
+            row = by_pid.get(int(p.player_id))
+            if not row:
+                continue
+            mins = _f(row, "MIN", "MINUTES")
+            if mins < ONOFF_MIN_MIN:
+                continue
+            # Lower DEF_RATING when ON = better D
+            drtg = _f(row, "DEF_RATING", "DEFRTG")
+            net = _f(row, "NET_RATING", "PLUS_MINUS")
+            if drtg <= 0 and net == 0:
+                continue
+            p.onoff_def_rtg = drtg
+            p.onoff_net = net
+            # Contribution: how much better/worse than team DRtg
+            team_d = float(side.def_rating) or 112.0
+            if drtg > 0:
+                delta = team_d - drtg  # positive → player helps D
+            else:
+                delta = net * 0.5
+            # Shrink by minutes
+            w = mins / (mins + ONOFF_SHRINK_K)
+            weighted_def += delta * w * mins
+            weight += mins
+            n += 1
+        if weight <= 0 or n == 0:
+            notes.append(
+                f"on/off D {side.abbreviation}: thin sample — skipped "
+                f"(need MIN≥{ONOFF_MIN_MIN:.0f})"
+            )
+            continue
+        adj = weighted_def / weight
+        adj = max(-ONOFF_NET_CLIP, min(ONOFF_NET_CLIP, adj))
+        # Better on-court D (adj>0) → lower team DRtg
+        before = float(side.def_rating)
+        side.def_rating = before - adj * 0.35
+        side.onoff_def_adj = adj
+        notes.append(
+            f"on/off D {side.abbreviation}: {n} players → DRtg "
+            f"{before:.1f}→{side.def_rating:.1f} (adj={adj:+.2f}, shrink K={ONOFF_SHRINK_K:.0f})"
+        )
+    return notes
+
+
 def apply_clutch_splits(matchup: Any, rows: list[dict[str, Any]] | None) -> list[str]:
     """
     Mild finishing mult from clutch eFG/TS vs season, heavily shrunk.
@@ -631,6 +842,45 @@ def enrich_matchup(
     if cl_err:
         notes.append(f"clutch: FAILED — {cl_err}")
     notes.extend(apply_clutch_splits(matchup, cl))
+
+    # Starters after last-N so projected MIN informs the top-5
+    notes.extend(apply_starter_confirmation(matchup))
+    notes.extend(apply_garbage_time_filter(matchup))
+
+    # On/Off D — soft per-team fetches (parallel)
+    onoff_jobs = []
+    for side in (matchup.home, matchup.away):
+        tid = int(side.team_id)
+
+        def _mk(tid=tid):
+            return soft_fetch(
+                f"on/off:{tid}",
+                lambda: fetch_team_onoff_summary(
+                    tid, season, date_to, season_type=st, use_cache=use_cache
+                ),
+                retries=2,
+                use_cache=False,
+            )
+
+        onoff_jobs.append((f"onoff_{tid}", _mk))
+    onoff_raw = parallel_map(onoff_jobs) if onoff_jobs else {}
+    on_by_team: dict[int, list[dict[str, Any]]] = {}
+    for side in (matchup.home, matchup.away):
+        tid = int(side.team_id)
+        raw = onoff_raw.get(f"onoff_{tid}")
+        if isinstance(raw, Exception):
+            notes.append(f"on/off D {side.abbreviation}: FAILED — {raw}")
+            continue
+        if isinstance(raw, tuple) and len(raw) == 2:
+            rows, err = raw
+            if err:
+                notes.append(f"on/off D {side.abbreviation}: FAILED — {err}")
+                continue
+            if rows:
+                on_by_team[tid] = rows
+        elif isinstance(raw, list):
+            on_by_team[tid] = raw
+    notes.extend(apply_onoff_defense(matchup, on_by_team or None))
 
     matchup.enrichment_notes = list(notes)
     return notes
