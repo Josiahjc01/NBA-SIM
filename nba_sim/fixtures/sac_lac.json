@@ -1,0 +1,44 @@
+{
+  "season": "2024-25",
+  "source": "fixture",
+  "as_of": "2025-04-01",
+  "game_date": null,
+  "home": {
+    "team_id": 1610612758,
+    "abbreviation": "SAC",
+    "full_name": "Sacramento Kings",
+    "pace": 100.2,
+    "off_rating": 114.8,
+    "def_rating": 115.1,
+    "players": [
+      {"player_id": 1628368, "name": "De'Aaron Fox", "team_id": 1610612758, "team_abbr": "SAC", "gp": 70, "min": 35.8, "pts": 24.8, "reb": 4.5, "oreb": 0.8, "dreb": 3.7, "ast": 6.2, "tov": 2.8, "fga": 19.5, "fgm": 9.0, "fg_pct": 0.462, "fg3a": 6.2, "fg3m": 2.1, "fg3_pct": 0.339, "fta": 5.5, "ft_pct": 0.785},
+      {"player_id": 1627741, "name": "Domantas Sabonis", "team_id": 1610612758, "team_abbr": "SAC", "gp": 70, "min": 35.2, "pts": 19.2, "reb": 13.8, "oreb": 3.4, "dreb": 10.4, "ast": 6.5, "tov": 3.1, "fga": 13.2, "fgm": 7.8, "fg_pct": 0.591, "fg3a": 1.2, "fg3m": 0.4, "fg3_pct": 0.333, "fta": 4.0, "ft_pct": 0.735},
+      {"player_id": 1628983, "name": "Keegan Murray", "team_id": 1610612758, "team_abbr": "SAC", "gp": 68, "min": 33.5, "pts": 14.8, "reb": 5.8, "oreb": 1.5, "dreb": 4.3, "ast": 1.6, "tov": 1.1, "fga": 12.5, "fgm": 5.5, "fg_pct": 0.440, "fg3a": 6.5, "fg3m": 2.4, "fg3_pct": 0.369, "fta": 1.6, "ft_pct": 0.820},
+      {"player_id": 203992, "name": "DeMar DeRozan", "team_id": 1610612758, "team_abbr": "SAC", "gp": 70, "min": 34.0, "pts": 21.5, "reb": 3.9, "oreb": 0.6, "dreb": 3.3, "ast": 4.2, "tov": 1.8, "fga": 16.8, "fgm": 8.0, "fg_pct": 0.476, "fg3a": 2.0, "fg3m": 0.7, "fg3_pct": 0.350, "fta": 5.8, "ft_pct": 0.850},
+      {"player_id": 1630169, "name": "Malik Monk", "team_id": 1610612758, "team_abbr": "SAC", "gp": 70, "min": 28.5, "pts": 15.8, "reb": 3.2, "oreb": 0.4, "dreb": 2.8, "ast": 4.8, "tov": 2.0, "fga": 13.0, "fgm": 5.8, "fg_pct": 0.446, "fg3a": 5.5, "fg3m": 2.1, "fg3_pct": 0.382, "fta": 2.5, "ft_pct": 0.820},
+      {"player_id": 1629011, "name": "Kevin Huerter", "team_id": 1610612758, "team_abbr": "SAC", "gp": 60, "min": 24.0, "pts": 9.5, "reb": 3.4, "oreb": 0.5, "dreb": 2.9, "ast": 2.4, "tov": 1.0, "fga": 8.2, "fgm": 3.4, "fg_pct": 0.415, "fg3a": 5.0, "fg3m": 1.8, "fg3_pct": 0.360, "fta": 1.0, "ft_pct": 0.760},
+      {"player_id": 1631099, "name": "Keon Ellis", "team_id": 1610612758, "team_abbr": "SAC", "gp": 65, "min": 22.0, "pts": 7.8, "reb": 2.5, "oreb": 0.6, "dreb": 1.9, "ast": 1.4, "tov": 0.7, "fga": 6.0, "fgm": 2.7, "fg_pct": 0.450, "fg3a": 3.5, "fg3m": 1.4, "fg3_pct": 0.400, "fta": 1.0, "ft_pct": 0.780},
+      {"player_id": 1629655, "name": "Trey Lyles", "team_id": 1610612758, "team_abbr": "SAC", "gp": 62, "min": 18.5, "pts": 7.2, "reb": 4.5, "oreb": 1.0, "dreb": 3.5, "ast": 1.1, "tov": 0.7, "fga": 6.0, "fgm": 2.5, "fg_pct": 0.417, "fg3a": 3.8, "fg3m": 1.3, "fg3_pct": 0.342, "fta": 1.2, "ft_pct": 0.700},
+      {"player_id": 1630596, "name": "Jonas Valanciunas", "team_id": 1610612758, "team_abbr": "SAC", "gp": 70, "min": 16.0, "pts": 8.5, "reb": 7.0, "oreb": 2.2, "dreb": 4.8, "ast": 1.5, "tov": 1.2, "fga": 6.2, "fgm": 3.5, "fg_pct": 0.565, "fg3a": 0.5, "fg3m": 0.1, "fg3_pct": 0.200, "fta": 1.8, "ft_pct": 0.780}
+    ]
+  },
+  "away": {
+    "team_id": 1610612746,
+    "abbreviation": "LAC",
+    "full_name": "LA Clippers",
+    "pace": 97.8,
+    "off_rating": 115.5,
+    "def_rating": 111.2,
+    "players": [
+      {"player_id": 202331, "name": "Paul George", "team_id": 1610612746, "team_abbr": "LAC", "gp": 55, "min": 33.8, "pts": 21.8, "reb": 5.3, "oreb": 0.7, "dreb": 4.6, "ast": 3.8, "tov": 2.4, "fga": 17.5, "fgm": 7.8, "fg_pct": 0.446, "fg3a": 7.0, "fg3m": 2.7, "fg3_pct": 0.386, "fta": 4.2, "ft_pct": 0.880},
+      {"player_id": 201935, "name": "James Harden", "team_id": 1610612746, "team_abbr": "LAC", "gp": 68, "min": 34.5, "pts": 21.5, "reb": 5.5, "oreb": 0.6, "dreb": 4.9, "ast": 8.2, "tov": 3.5, "fga": 16.0, "fgm": 6.5, "fg_pct": 0.406, "fg3a": 7.5, "fg3m": 2.8, "fg3_pct": 0.373, "fta": 6.5, "ft_pct": 0.875},
+      {"player_id": 202695, "name": "Kawhi Leonard", "team_id": 1610612746, "team_abbr": "LAC", "gp": 50, "min": 32.5, "pts": 23.5, "reb": 6.0, "oreb": 1.1, "dreb": 4.9, "ast": 3.4, "tov": 2.0, "fga": 17.8, "fgm": 8.8, "fg_pct": 0.494, "fg3a": 4.5, "fg3m": 1.8, "fg3_pct": 0.400, "fta": 4.5, "ft_pct": 0.870},
+      {"player_id": 1627826, "name": "Ivica Zubac", "team_id": 1610612746, "team_abbr": "LAC", "gp": 70, "min": 30.5, "pts": 14.8, "reb": 11.5, "oreb": 3.5, "dreb": 8.0, "ast": 1.5, "tov": 1.5, "fga": 9.5, "fgm": 6.2, "fg_pct": 0.653, "fg3a": 0.0, "fg3m": 0.0, "fg3_pct": 0.0, "fta": 3.2, "ft_pct": 0.720},
+      {"player_id": 1629611, "name": "Norman Powell", "team_id": 1610612746, "team_abbr": "LAC", "gp": 68, "min": 30.0, "pts": 18.5, "reb": 2.8, "oreb": 0.3, "dreb": 2.5, "ast": 1.8, "tov": 1.5, "fga": 13.5, "fgm": 6.5, "fg_pct": 0.481, "fg3a": 5.5, "fg3m": 2.3, "fg3_pct": 0.418, "fta": 3.5, "ft_pct": 0.840},
+      {"player_id": 1627732, "name": "Ben Simmons", "team_id": 1610612746, "team_abbr": "LAC", "gp": 45, "min": 22.0, "pts": 6.0, "reb": 5.5, "oreb": 1.2, "dreb": 4.3, "ast": 5.5, "tov": 2.0, "fga": 5.0, "fgm": 2.8, "fg_pct": 0.560, "fg3a": 0.1, "fg3m": 0.0, "fg3_pct": 0.0, "fta": 1.5, "ft_pct": 0.450},
+      {"player_id": 1628991, "name": "Amir Coffey", "team_id": 1610612746, "team_abbr": "LAC", "gp": 65, "min": 20.0, "pts": 7.5, "reb": 2.2, "oreb": 0.4, "dreb": 1.8, "ast": 1.2, "tov": 0.6, "fga": 5.8, "fgm": 2.6, "fg_pct": 0.448, "fg3a": 2.8, "fg3m": 1.1, "fg3_pct": 0.393, "fta": 1.2, "ft_pct": 0.820},
+      {"player_id": 1631111, "name": "Kris Dunn", "team_id": 1610612746, "team_abbr": "LAC", "gp": 60, "min": 20.5, "pts": 6.8, "reb": 3.0, "oreb": 0.7, "dreb": 2.3, "ast": 3.2, "tov": 1.2, "fga": 5.5, "fgm": 2.5, "fg_pct": 0.455, "fg3a": 1.5, "fg3m": 0.5, "fg3_pct": 0.333, "fta": 1.0, "ft_pct": 0.700},
+      {"player_id": 1628971, "name": "Derrick Jones Jr.", "team_id": 1610612746, "team_abbr": "LAC", "gp": 65, "min": 22.0, "pts": 8.5, "reb": 3.2, "oreb": 1.0, "dreb": 2.2, "ast": 0.9, "tov": 0.7, "fga": 6.5, "fgm": 3.2, "fg_pct": 0.492, "fg3a": 2.5, "fg3m": 0.9, "fg3_pct": 0.360, "fta": 1.5, "ft_pct": 0.750}
+    ]
+  }
+}
