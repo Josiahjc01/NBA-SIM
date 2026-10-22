@@ -19,7 +19,7 @@ pip install -r requirements.txt
 Do **not** pass `--fixtures` for a real matchup. Fixtures are outdated offline smoke only.
 
 ```bash
-# Just works: pulls rosters, base stats, blend feeds, optional hustle/PtDefend/injuries
+# Just works: pulls rosters, stats, four-factors, shot zones, hustle/PtDefend, injuries…
 python -m nba_sim --home LAC --away SAC --n 5000
 
 # Full names
@@ -45,7 +45,7 @@ python -m nba_sim --check-data          # same
 python -m nba_sim doctor --json         # machine-readable
 ```
 
-Required feeds (player/team stats, roster, scoreboard) must pass. Optional feeds (hustle, PtDefend, ESPN injuries) warn and degrade gracefully with loud `feed:` provenance.
+Required feeds (player/team stats, roster, scoreboard) must pass. Optional feeds (hustle, PtDefend, Four Factors, shot locations, ESPN injuries) warn and degrade gracefully with loud `feed:` provenance. After upgrades use `--no-cache` once (schema `blendv7`).
 
 ### Live fetch env tips (`stats.nba.com`)
 
@@ -148,10 +148,13 @@ On live loads the sim also pulls:
 |--------|--------|-------------------------|
 | Height / weight / position | `CommonTeamRoster` | Frontcourt + **slot D** (G/F/C) → 2P/3P contest |
 | USG% / TS% / eFG% | `LeagueDashPlayerStats` Advanced | Usage blend + finishing |
+| **Four Factors** | `LeagueDashTeamStats` Four Factors | eFG/TOV%/OREB%/FTR (+opp) → FG, TOV, OREB, fouls |
+| **Shot zones** | `LeagueDashTeamShotLocations` | Rim rate + corner-3 → FG2/FG3 / 3PA tilt |
 | Hustle | `LeagueHustleStatsTeam` | Deflections → TOV; contested → FG |
 | PtDefend | `LeagueDashPtTeamDefend` | Rim / 3PT / overall D_FG → FG2/FG3 |
 | Head coach + style | `TeamInfoCommon` + pace/3PAR/DRtg | 3PA tilt, TOV pressure, pace notes |
-| Rest / travel | Yesterday (+ tip−3) slate only | B2B, road B2B, 3-in-4 FG/pace |
+| Rest / travel / altitude | Yesterday slate + arena coords; DEN home | B2B, miles fatigue, DEN 3P/pace |
+| Early S2D shrink | Team GP from dashboards | Pace/ORtg/DRtg → league when GP&lt;12 |
 | Injuries | ESPN site (+ core fallback); default **on** live | Out/Doubtful→0; Q→×0.5; `--no-injuries` to skip |
 
 Styles are derived (push-pace / grind / live-by-three / paint-first / defense-first), not a full playbook database. Report prints **Matchup context** + calibration flags.

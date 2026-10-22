@@ -238,7 +238,20 @@
     ],
     "coach_name": "Coach",
     "deflections_pg": 12.0,
-    "contested_shots_pg": 45.0
+    "contested_shots_pg": 45.0,
+    "efg_pct": 0.555,
+    "tov_pct": 0.13,
+    "oreb_pct": 0.275,
+    "ftr": 0.26,
+    "opp_efg_pct": 0.538,
+    "opp_tov_pct": 0.138,
+    "opp_oreb_pct": 0.27,
+    "rim_fga_rate": 0.34,
+    "corner3_rate": 0.22,
+    "team_gp": 10,
+    "travel_miles": 0.0,
+    "altitude_fg3_boost": 0.0,
+    "foul_rate": 0.09
   },
   "away": {
     "team_id": 1610612743,
@@ -475,6 +488,19 @@
     ],
     "coach_name": "Coach",
     "deflections_pg": 12.0,
-    "contested_shots_pg": 45.0
+    "contested_shots_pg": 45.0,
+    "efg_pct": 0.56,
+    "tov_pct": 0.13,
+    "oreb_pct": 0.29,
+    "ftr": 0.25,
+    "opp_efg_pct": 0.538,
+    "opp_tov_pct": 0.138,
+    "opp_oreb_pct": 0.27,
+    "rim_fga_rate": 0.36,
+    "corner3_rate": 0.21,
+    "team_gp": 10,
+    "travel_miles": 700.0,
+    "altitude_fg3_boost": 0.0,
+    "foul_rate": 0.09
   }
 }

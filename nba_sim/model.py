@@ -29,12 +29,12 @@ MIN_ROTATION = 8
 MAX_ROTATION = 10
 MAX_ARCHETYPE_IN_ROTATION = 2  # pure expected-production rookies
 ARCHETYPE_SORT_PENALTY = 0.40  # down-weight archetype minutes in rotation sort
-USAGE_CONCENTRATION = 1.20  # >1 concentrates shot share toward high-usage players
+USAGE_CONCENTRATION = 1.28  # >1 concentrates shot share toward high-usage players
 TEAM_MINUTES_TARGET = 240.0
 REGULATION_POSSESSIONS_SCALE = 1.0
 OT_POSSESSIONS = 12  # ~5 min OT ≈ 12 poss each side roughly alternating
 MAX_OT_PERIODS = 3
-SHOOTING_FOUL_RATE = 0.085  # on 2PT attempts
+SHOOTING_FOUL_RATE = 0.085  # on 2PT attempts (overridden by team FTR when present)
 OREB_RATE_DEFAULT = 0.28
 TOV_RATE_FLOOR = 0.08
 TOV_RATE_CEIL = 0.18
@@ -76,7 +76,14 @@ def matchup_fingerprint(matchup: MatchupData) -> str:
             f"{getattr(team, 'pt_dfg_overall', 0.0):.4f}:"
             f"{getattr(team, 'pt_dfg_three', 0.0):.4f}:"
             f"{getattr(team, 'pt_dfg_rim', 0.0):.4f}:"
-            f"{getattr(team, 'deflections_pg', 0.0):.2f}"
+            f"{getattr(team, 'deflections_pg', 0.0):.2f}:"
+            f"{getattr(team, 'efg_pct', 0.0):.4f}:"
+            f"{getattr(team, 'oreb_pct', 0.0):.4f}:"
+            f"{getattr(team, 'ftr', 0.0):.4f}:"
+            f"{getattr(team, 'rim_fga_rate', 0.0):.3f}:"
+            f"{getattr(team, 'corner3_rate', 0.0):.3f}:"
+            f"{getattr(team, 'travel_miles', 0.0):.0f}:"
+            f"{getattr(team, 'altitude_fg3_boost', 0.0):.4f}"
         )
         for p in sorted(team.players, key=lambda x: x.player_id):
             parts.append(
@@ -177,6 +184,8 @@ class _TeamContext:
     off_rating: float
     def_rating: float
     minutes: np.ndarray  # allocated minutes shares * 240
+    foul_rate: float = SHOOTING_FOUL_RATE
+    altitude_fg3_boost: float = 0.0
 
 
 def _clip(x: float, lo: float, hi: float) -> float:
@@ -355,9 +364,53 @@ def _build_context(
         opp_tov_mult *= hustle_tov_multiplier(opp_hustle)
         opp_contest = hustle_contest_multiplier(opp_hustle)
 
+    from nba_sim.signals import (
+        corner3_fg3_multiplier,
+        corner3_rate_tilt,
+        four_factor_fg_multipliers,
+        four_factors_from_team,
+        opp_four_factor_fg_multipliers,
+        oreb_rate_from_factors,
+        pace_three_tilt,
+        rim_fg2_multiplier,
+    )
+
     pt_fg2 = pt_fg3 = 1.0
     if opp_team is not None:
         pt_fg2, pt_fg3 = pt_defend_fg_multipliers(pt_defend_from_team(opp_team))
+
+    own_ff = four_factors_from_team(team)
+    ff_fg2, ff_fg3 = four_factor_fg_multipliers(own_ff)
+    opp_ff2 = opp_ff3 = 1.0
+    if opp_team is not None:
+        opp_ff2, opp_ff3 = opp_four_factor_fg_multipliers(four_factors_from_team(opp_team))
+
+    rim_m = rim_fg2_multiplier(
+        float(getattr(team, "rim_fga_rate", 0.0) or 0.0),
+        float(getattr(opp_team, "pt_dfg_rim", 0.0) or 0.0) if opp_team else 0.0,
+    )
+    c3_fg = corner3_fg3_multiplier(float(getattr(team, "corner3_rate", 0.0) or 0.0))
+    c3_tilt = corner3_rate_tilt(float(getattr(team, "corner3_rate", 0.0) or 0.0))
+    pace_3 = 1.0
+    if opp_team is not None:
+        pace_3 = pace_three_tilt(float(team.pace), float(opp_team.pace))
+    three_mult *= c3_tilt * pace_3
+
+    alt_3 = float(getattr(team, "altitude_fg3_boost", 0.0) or 0.0)
+    foul_rate = float(getattr(team, "foul_rate", 0.0) or 0.0) or SHOOTING_FOUL_RATE
+
+    # Four-factors TOV% can refine team TOV when available (blend lightly)
+    ff_tov = float(own_ff.tov_pct or 0.0)
+    if opp_team is not None:
+        opp_ff = four_factors_from_team(opp_team)
+        # Defense that forces TOVs (high opp_tov_pct allowed? actually OPP_TOV_PCT
+        # is turnovers forced by this defense as % of opp possessions)
+        forced = float(opp_ff.opp_tov_pct or 0.0)
+        if forced > 0:
+            # Higher forced TOV% → bump our TOV a hair
+            from nba_sim.signals import LEAGUE_TOV_PCT
+
+            opp_tov_mult *= _clip(1.0 + 0.5 * (forced - LEAGUE_TOV_PCT) / 0.03, 0.96, 1.06)
 
     fg2, fg3, three_rate, ft = [], [], [], []
     tov_num = tov_den = 0.0
@@ -379,12 +432,30 @@ def _build_context(
                 p, float(getattr(p, "height_in", 0.0) or 0.0), opp_pos_def
             )
         fg2_p = _clip(
-            fg2_p * shot_adj * fg2_size * ts_mult * pos_fg2 * opp_contest * pt_fg2,
+            fg2_p
+            * shot_adj
+            * fg2_size
+            * ts_mult
+            * pos_fg2
+            * opp_contest
+            * pt_fg2
+            * ff_fg2
+            * opp_ff2
+            * rim_m,
             FG_FLOOR,
             FG_CEIL,
         )
         g3 = _clip(
-            g3 * shot_adj * ts_mult * pos_fg3 * opp_contest * pt_fg3,
+            g3
+            * shot_adj
+            * ts_mult
+            * pos_fg3
+            * opp_contest
+            * pt_fg3
+            * ff_fg3
+            * opp_ff3
+            * c3_fg
+            + alt_3,
             FG3_FLOOR,
             FG3_CEIL,
         )
@@ -400,13 +471,23 @@ def _build_context(
 
     # Team turnover rate per possession ≈ TOV / (FGA + TOV + 0.44*FTA),
     # weighted — NOT multiplied by pace again later.
-    tov_rate = _clip(
-        (tov_num / max(tov_den, 1e-6)) * opp_tov_mult,
-        TOV_RATE_FLOOR,
-        TOV_RATE_CEIL,
+    tov_rate = tov_num / max(tov_den, 1e-6)
+    if ff_tov > 0:
+        tov_rate = 0.65 * tov_rate + 0.35 * ff_tov
+    tov_rate = _clip(tov_rate * opp_tov_mult, TOV_RATE_FLOOR, TOV_RATE_CEIL)
+
+    player_oreb = (
+        _clip(oreb_num / max(oreb_den, 1e-6), 0.18, 0.35) if oreb_den else OREB_RATE_DEFAULT
     )
-    oreb_rate = _clip(oreb_num / max(oreb_den, 1e-6), 0.18, 0.35) if oreb_den else OREB_RATE_DEFAULT
-    oreb_rate = _clip(oreb_rate + oreb_size, 0.16, 0.38)
+    opp_oreb_allowed = (
+        float(getattr(opp_team, "opp_oreb_pct", 0.0) or 0.0) if opp_team else 0.0
+    )
+    ff_oreb = oreb_rate_from_factors(
+        float(own_ff.oreb_pct or 0.0),
+        opp_oreb_allowed,
+        base=player_oreb,
+    )
+    oreb_rate = _clip(0.5 * player_oreb + 0.5 * ff_oreb + oreb_size, 0.16, 0.38)
 
     return _TeamContext(
         abbr=team.abbreviation,
@@ -427,15 +508,19 @@ def _build_context(
         off_rating=float(team.off_rating) if team.off_rating > 0 else 112.0,
         def_rating=float(team.def_rating) if team.def_rating > 0 else 112.0,
         minutes=alloc_min,
+        foul_rate=foul_rate,
+        altitude_fg3_boost=alt_3,
     )
 
 
 def _expected_possessions(home: _TeamContext, away: _TeamContext, rng: np.random.Generator) -> tuple[int, int]:
     """
-    Single pace mechanism: game possessions ≈ average of team paces.
+    Single pace mechanism: compromise of team paces (pace-clash aware).
     Player per-game rates are NOT also used as absolute possession counts.
     """
-    base = 0.5 * (home.pace + away.pace)
+    from nba_sim.signals import pace_matchup_possessions
+
+    base = pace_matchup_possessions(home.pace, away.pace)
     # Mild noise; clip to plausible NBA game range
     noise = rng.normal(0.0, 2.5)
     poss = int(round(_clip(base + noise, 88.0, 115.0)))
@@ -479,8 +564,9 @@ def _run_possessions(
         is_three = rng.random() < offense.three_rate[shooter]
         offense.lines[shooter].fga += 1
 
-        # Shooting foul on 2PT (simplified)
-        if (not is_three) and rng.random() < SHOOTING_FOUL_RATE:
+        # Shooting foul on 2PT (team FTR when available)
+        foul_p = float(getattr(offense, "foul_rate", 0.0) or SHOOTING_FOUL_RATE)
+        if (not is_three) and rng.random() < foul_p:
             fta = 2
             offense.lines[shooter].fta += fta
             made = 0
@@ -766,9 +852,9 @@ def _audit_batch(results: Sequence[GameResult], matchup: MatchupData) -> dict:
         "drtg_mechanism": "FG/3P × clip(opp_DRtg/league, 0.94, 1.06); higher DRtg (worse D) boosts offense",
         "ortg_mechanism": "team ORtg not re-applied to FG (already in player rates; avoids double-count)",
         "matchup_context": (
-            "heights + positional slot D, PtDefend (rim/3PT D_FG), hustle "
-            "(deflections/contested), USG%/TS%, coach style (pace/3PAR/DRtg), "
-            "B2B/travel rest"
+            "heights + positional/PtDefend D, four factors (eFG/TOV/OREB/FTR), "
+            "rim/corner shot profile, pace clash, hustle, USG%/TS%, coach style, "
+            "B2B/travel/altitude, early-S2D shrink"
         ),
         "tie_break": f"up to {MAX_OT_PERIODS} OT periods ({OT_POSSESSIONS} poss/side); then +1 coin-flip",
         "data_note": f"priors from matchup source={matchup.source} season={matchup.season}",

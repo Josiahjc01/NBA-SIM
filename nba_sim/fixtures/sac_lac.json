@@ -266,7 +266,21 @@
     ],
     "coach_name": "Mike Brown",
     "deflections_pg": 14.0,
-    "contested_shots_pg": 48.0
+    "contested_shots_pg": 48.0,
+    "efg_pct": 0.548,
+    "tov_pct": 0.132,
+    "oreb_pct": 0.285,
+    "ftr": 0.255,
+    "opp_efg_pct": 0.54,
+    "opp_tov_pct": 0.14,
+    "opp_oreb_pct": 0.265,
+    "rim_fga_rate": 0.33,
+    "corner3_rate": 0.24,
+    "team_gp": 8,
+    "sos_net": 0.0,
+    "travel_miles": 0.0,
+    "altitude_fg3_boost": 0.0,
+    "foul_rate": 0.08670000000000001
   },
   "away": {
     "team_id": 1610612746,
@@ -531,6 +545,20 @@
     ],
     "coach_name": "Tyronn Lue",
     "deflections_pg": 13.0,
-    "contested_shots_pg": 52.0
+    "contested_shots_pg": 52.0,
+    "efg_pct": 0.552,
+    "tov_pct": 0.132,
+    "oreb_pct": 0.255,
+    "ftr": 0.27,
+    "opp_efg_pct": 0.535,
+    "opp_tov_pct": 0.14,
+    "opp_oreb_pct": 0.265,
+    "rim_fga_rate": 0.3,
+    "corner3_rate": 0.2,
+    "team_gp": 8,
+    "sos_net": 0.0,
+    "travel_miles": 380.0,
+    "altitude_fg3_boost": 0.0,
+    "foul_rate": 0.0918
   }
 }

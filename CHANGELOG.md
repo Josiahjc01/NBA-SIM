@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.0
+- **Four Factors** live feed (`LeagueDashTeamStats` MeasureType=Four Factors):
+  eFG / TOV% / OREB% / FTR (+ opp) → mild FG, TOV blend, OREB battle, foul rate
+- **Shot locations** (`LeagueDashTeamShotLocations` By Zone): rim FGA rate + corner-3
+  rate → FG2/FG3 + three-rate tilt; interacts with PtDefend rim D
+- **Pace clash**: extreme pace gaps pull possessions toward league; faster games
+  slight three-rate bump
+- **Travel miles** (arena coords) + stronger B2B fatigue on long flights
+- **DEN altitude**: home 3P +0.8pp and pace +0.8
+- **Early-S2D shrink**: pace/ORtg/DRtg toward league when team GP &lt; 12
+- Usage concentration 1.20 → 1.28 (less star flattening)
+- Doctor probes Four Factors + Shot Locations; cache schema `blendv7`
+- New module `nba_sim/signals.py`; fixture enrichment; expanded tests
+
 ## 0.4.1
 - Live data reliability: parallel fetch waves, endpoint cache (`.cache/endpoints/`),
   Chrome-like NBA Stats headers, env tunables (`NBA_SIM_TIMEOUT/RETRIES/PAUSE/CACHE_TTL/MAX_WORKERS`)

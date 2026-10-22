@@ -36,11 +36,13 @@ python -m nba_sim doctor
 
 ## Run a matchup (live 2026-27)
 
-One command pulls everything needed (rosters, stats, blend, optional hustle/PtDefend, injuries):
+One command pulls everything needed (rosters, stats, blend, four-factors, shot zones, hustle/PtDefend, injuries):
 
 ```bash
 source .venv/bin/activate
 python -m nba_sim --home LAC --away SAC --n 5000
+# After upgrades / new cache schema:
+python -m nba_sim --home LAC --away SAC --n 5000 --no-cache --seed 42
 ```
 
 Other examples:

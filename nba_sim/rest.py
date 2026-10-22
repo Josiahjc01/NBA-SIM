@@ -87,6 +87,24 @@ def apply_b2b_flags(
             fg = float(max(0.96, fg - THREE_IN_FOUR_EXTRA))
             tags.append("3-in-4")
 
+        # Travel miles into tip (away already stamped; home may have flown yesterday)
+        from nba_sim.signals import travel_fatigue_fg_mult, travel_miles
+
+        miles = float(getattr(team, "travel_miles", 0.0) or 0.0)
+        if side == "home" and role_y == "away":
+            # Flew home from yesterday's road game
+            # Approximate: unknown previous city → use a mid-range road trip
+            miles = max(miles, 900.0)
+        elif side == "away":
+            # Miles into tonight's home city already set in live load; if 0, estimate
+            if miles <= 0:
+                miles = travel_miles(team.abbreviation, matchup.home.abbreviation)
+                team.travel_miles = miles
+        travel_fg = travel_fatigue_fg_mult(miles, on_b2b=True)
+        fg = float(min(fg, travel_fg))
+        if miles >= 800:
+            tags.append(f"{miles:.0f}mi")
+
         team.pace = float(max(88.0, team.pace + pace_d))
         team.fatigue_fg_mult = float(min(getattr(team, "fatigue_fg_mult", 1.0) or 1.0, fg))
         notes.append(

@@ -166,6 +166,60 @@ def check_pt_defend(season: str | None = None) -> CheckResult:
     )
 
 
+def check_four_factors(season: str | None = None) -> CheckResult:
+    from nba_sim.data import _fetch_league_team_four_factors
+
+    season = season or CURRENT_SEASON
+    val, err = soft_fetch(
+        "FourFactors",
+        lambda: _fetch_league_team_four_factors(season, None, use_cache=True),
+        retries=2,
+        use_cache=False,
+    )
+    if err or not val:
+        return CheckResult(
+            "FourFactors (TeamStats)",
+            False,
+            False,
+            err or "empty",
+            0.0,
+        )
+    return CheckResult(
+        "FourFactors (TeamStats)",
+        False,
+        True,
+        f"{len(val)} rows season={season}",
+        0.0,
+    )
+
+
+def check_shot_locations(season: str | None = None) -> CheckResult:
+    from nba_sim.data import _fetch_team_shot_locations
+
+    season = season or CURRENT_SEASON
+    val, err = soft_fetch(
+        "ShotLocations",
+        lambda: _fetch_team_shot_locations(season, None, use_cache=True),
+        retries=2,
+        use_cache=False,
+    )
+    if err or not val:
+        return CheckResult(
+            "TeamShotLocations",
+            False,
+            False,
+            err or "empty",
+            0.0,
+        )
+    return CheckResult(
+        "TeamShotLocations",
+        False,
+        True,
+        f"{len(val)} rows season={season}",
+        0.0,
+    )
+
+
 def check_espn_injuries() -> CheckResult:
     t0 = time.time()
 
@@ -224,6 +278,8 @@ def run_doctor(
     for fn in (
         lambda: check_hustle(season),
         lambda: check_pt_defend(season),
+        lambda: check_four_factors(season),
+        lambda: check_shot_locations(season),
         check_espn_injuries,
     ):
         r = fn()

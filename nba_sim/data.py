@@ -45,7 +45,7 @@ CACHE_DIR = Path(__file__).resolve().parents[1] / ".cache"
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 CACHE_TTL_SECONDS = 6 * 60 * 60  # shorter so live S2D stays fresh
 # Matchup aggregate cache schema — bump when TeamSeason / blend inputs change.
-MATCHUP_CACHE_SCHEMA = "blendv6"
+MATCHUP_CACHE_SCHEMA = "blendv7"
 
 # When True, suppress informational prints (warnings for hard failures still raise).
 _QUIET = False
@@ -128,6 +128,23 @@ class TeamSeason:
     pt_dfg_overall: float = 0.0
     pt_dfg_three: float = 0.0
     pt_dfg_rim: float = 0.0  # Less Than 6Ft
+    # Four factors (0 = unknown)
+    efg_pct: float = 0.0
+    tov_pct: float = 0.0
+    oreb_pct: float = 0.0
+    ftr: float = 0.0  # FTA/FGA
+    opp_efg_pct: float = 0.0
+    opp_tov_pct: float = 0.0
+    opp_oreb_pct: float = 0.0
+    # Shot profile (offense)
+    rim_fga_rate: float = 0.0
+    corner3_rate: float = 0.0
+    # Early-season / travel / altitude
+    team_gp: float = 0.0
+    sos_net: float = 0.0  # mean opponent net rating faced (proxy)
+    travel_miles: float = 0.0
+    altitude_fg3_boost: float = 0.0
+    foul_rate: float = 0.0  # derived shooting-foul rate; 0 → model default
 
 
 @dataclass
@@ -476,6 +493,268 @@ def _attach_pt_defend(
     team.pt_dfg_overall = _pick(overall)
     team.pt_dfg_three = _pick(threes)
     team.pt_dfg_rim = _pick(rim)
+
+
+def _fetch_league_team_four_factors(
+    season: str,
+    date_to: str | None,
+    *,
+    use_cache: bool = True,
+) -> list[dict[str, Any]]:
+    """LeagueDashTeamStats MeasureType=Four Factors."""
+    from nba_api.stats.endpoints import leaguedashteamstats
+
+    label = f"LeagueDashTeamStats.FourFactors({season},to={date_to or 'latest'})"
+    cache_key = f"ep_team_ff_{season}_{date_to or 'latest'}"
+
+    def call():
+        kwargs: dict[str, Any] = endpoint_kwargs(
+            {
+                "season": season,
+                "per_mode_detailed": "PerGame",
+                "measure_type_detailed_defense": "Four Factors",
+                "season_type_all_star": "Regular Season",
+            }
+        )
+        if date_to:
+            kwargs["date_to_nullable"] = date_to
+        ep = leaguedashteamstats.LeagueDashTeamStats(**kwargs)
+        return ep.get_normalized_dict().get("LeagueDashTeamStats") or []
+
+    return with_retries(label, call, use_cache=use_cache, cache_key=cache_key)
+
+
+def _fetch_team_shot_locations(
+    season: str,
+    date_to: str | None,
+    *,
+    use_cache: bool = True,
+) -> list[dict[str, Any]]:
+    """
+    LeagueDashTeamShotLocations By Zone → flattened rim / corner3 rates.
+
+    nba_api returns multi-level headers; we normalize best-effort into
+    {TEAM_ID, FGA, RIM_FGA, CORNER3_FGA, FG3A}.
+    """
+    from nba_api.stats.endpoints import leaguedashteamshotlocations
+
+    label = f"LeagueDashTeamShotLocations({season},to={date_to or 'latest'})"
+    cache_key = f"ep_team_shotloc_{season}_{date_to or 'latest'}"
+
+    def call():
+        kwargs: dict[str, Any] = endpoint_kwargs(
+            {
+                "season": season,
+                "distance_range": "By Zone",
+                "per_mode_detailed": "PerGame",
+                "measure_type_simple": "Base",
+                "season_type_all_star": "Regular Season",
+            }
+        )
+        if date_to:
+            kwargs["date_to_nullable"] = date_to
+        ep = leaguedashteamshotlocations.LeagueDashTeamShotLocations(**kwargs)
+        # Prefer normalized; fall back to raw frames
+        try:
+            data = ep.get_normalized_dict()
+        except Exception:  # noqa: BLE001
+            data = {}
+        rows = []
+        for key, val in (data or {}).items():
+            if isinstance(val, list) and val:
+                rows = val
+                break
+        if rows:
+            return _flatten_shot_location_rows(rows)
+        # DataFrame path
+        try:
+            frames = ep.get_data_frames()
+            if frames:
+                return _flatten_shot_location_df(frames[0])
+        except Exception:  # noqa: BLE001
+            pass
+        return []
+
+    return with_retries(label, call, use_cache=use_cache, cache_key=cache_key)
+
+
+def _flatten_shot_location_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Best-effort zone → rim/corner aggregates when API already flat."""
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        tid = row.get("TEAM_ID") or row.get("team_id")
+        if tid is None:
+            continue
+        # If already has our keys, pass through
+        if "RIM_FGA" in row or "CORNER3_FGA" in row:
+            out.append(row)
+            continue
+        # Some payloads use ZONE_ABB / FGA per row (long format)
+        zone = str(row.get("SHOT_ZONE_BASIC") or row.get("ZONE") or "").lower()
+        fga = _f(row, "FGA")
+        if "restricted" in zone or "less than" in zone or zone in {"ra", "rim"}:
+            out.append({"TEAM_ID": tid, "RIM_FGA": fga, "FGA": fga})
+        elif "corner" in zone:
+            out.append({"TEAM_ID": tid, "CORNER3_FGA": fga, "FG3A": fga})
+    return out or rows
+
+
+def _flatten_shot_location_df(df: Any) -> list[dict[str, Any]]:
+    """Parse multi-index shot-location DataFrame into per-team rim/corner rates."""
+    try:
+        import pandas as pd  # type: ignore
+    except ImportError:
+        return []
+    if df is None or getattr(df, "empty", True):
+        return []
+    # Columns may be MultiIndex: (zone, stat)
+    records: dict[int, dict[str, float]] = {}
+    cols = list(df.columns)
+
+    def _col_match(zone_sub: str, stat: str) -> Any:
+        for c in cols:
+            if isinstance(c, tuple):
+                z = " ".join(str(x) for x in c[:-1]).lower()
+                s = str(c[-1]).upper()
+                if zone_sub in z and s == stat:
+                    return c
+            else:
+                name = str(c).lower()
+                if zone_sub in name and stat.lower() in name:
+                    return c
+        return None
+
+    tid_col = None
+    for c in cols:
+        if str(c).upper() in {"TEAM_ID", "TEAMID"} or (
+            isinstance(c, tuple) and str(c[-1]).upper() == "TEAM_ID"
+        ):
+            tid_col = c
+            break
+    if tid_col is None and len(cols) > 0:
+        # often first columns are TEAM_ID / TEAM_NAME under empty zone
+        for c in cols[:5]:
+            if "TEAM_ID" in str(c).upper():
+                tid_col = c
+                break
+    if tid_col is None:
+        return []
+
+    rim_c = _col_match("restricted", "FGA") or _col_match("less than 5", "FGA")
+    c3_c = _col_match("corner", "FGA")
+    # Total FGA: sum zones or a 'Field Goal Area' total if present
+    total_c = _col_match("field goal", "FGA") or _col_match("all", "FGA")
+    above_c = _col_match("above the break", "FGA")
+
+    for _, row in df.iterrows():
+        try:
+            tid = int(row[tid_col])
+        except (TypeError, ValueError, KeyError):
+            continue
+        rim = float(row[rim_c]) if rim_c is not None else 0.0
+        c3 = float(row[c3_c]) if c3_c is not None else 0.0
+        total = float(row[total_c]) if total_c is not None else 0.0
+        above = float(row[above_c]) if above_c is not None else 0.0
+        fg3a = c3 + above
+        if total <= 0:
+            # sum available zone FGAs
+            total = rim + c3 + above
+        records[tid] = {
+            "TEAM_ID": float(tid),
+            "FGA": total,
+            "RIM_FGA": rim,
+            "CORNER3_FGA": c3,
+            "FG3A": fg3a,
+        }
+    return [v for v in records.values()]
+
+
+def _attach_four_factors(
+    team: TeamSeason, rows: list[dict[str, Any]] | None
+) -> None:
+    if not rows:
+        return
+    from nba_sim.signals import foul_rate_from_ftr, parse_four_factors_row
+
+    tid = int(team.team_id)
+    for row in rows:
+        try:
+            if int(row.get("TEAM_ID") or 0) != tid:
+                continue
+        except (TypeError, ValueError):
+            continue
+        ff = parse_four_factors_row(row)
+        # Guard against mis-parsed OREB_PCT_RANK
+        if ff.oreb_pct > 0.6:
+            ff.oreb_pct = 0.0
+        team.efg_pct = ff.efg
+        team.tov_pct = ff.tov_pct
+        team.oreb_pct = ff.oreb_pct
+        team.ftr = ff.ftr
+        team.opp_efg_pct = ff.opp_efg
+        team.opp_tov_pct = ff.opp_tov_pct
+        team.opp_oreb_pct = ff.opp_oreb_pct if ff.opp_oreb_pct <= 0.6 else 0.0
+        if ff.ftr > 0:
+            team.foul_rate = foul_rate_from_ftr(ff.ftr)
+        gp = _f(row, "GP", "G")
+        if gp > 0:
+            team.team_gp = max(team.team_gp, gp)
+        return
+
+
+def _attach_shot_profile(
+    team: TeamSeason, rows: list[dict[str, Any]] | None
+) -> None:
+    if not rows:
+        return
+    from nba_sim.signals import parse_shot_profile
+
+    tid = int(team.team_id)
+    # Aggregate long-format rows for this team
+    agg: dict[str, float] = {"FGA": 0.0, "RIM_FGA": 0.0, "CORNER3_FGA": 0.0, "FG3A": 0.0}
+    hit = False
+    for row in rows:
+        try:
+            if int(row.get("TEAM_ID") or 0) != tid:
+                continue
+        except (TypeError, ValueError):
+            continue
+        hit = True
+        if "RIM_FGA" in row or "rim_fga_rate" in row or "RIM_RATE" in row:
+            rim, c3 = parse_shot_profile(row)
+            if rim or c3:
+                team.rim_fga_rate = rim
+                team.corner3_rate = c3
+                return
+        for k in agg:
+            if k in row and row[k] is not None:
+                try:
+                    agg[k] += float(row[k])
+                except (TypeError, ValueError):
+                    pass
+    if hit and (agg["RIM_FGA"] or agg["CORNER3_FGA"]):
+        rim, c3 = parse_shot_profile(agg)
+        team.rim_fga_rate = rim
+        team.corner3_rate = c3
+
+
+def _attach_team_gp_from_advanced(
+    team: TeamSeason, team_rows: list[dict[str, Any]] | None
+) -> None:
+    if not team_rows:
+        return
+    tid = int(team.team_id)
+    for row in team_rows:
+        try:
+            if int(row.get("TEAM_ID") or 0) != tid:
+                continue
+        except (TypeError, ValueError):
+            continue
+        gp = _f(row, "GP", "G")
+        if gp > 0:
+            team.team_gp = max(team.team_gp, gp)
+        # NET_RATING of team is not SoS; leave sos_net for schedule-derived later
+        return
 
 
 def _fetch_draft_picks(season: str) -> dict[int, int]:
@@ -1313,7 +1592,10 @@ def _load_live(
         )
 
     # --- Wave 3: optional enrichment (soft; never abort the matchup) ---
-    _say("  wave3: optional advanced / hustle / PtDefend / coaches ...")
+    _say(
+        "  wave3: optional advanced / hustle / PtDefend / four-factors / "
+        "shot zones / coaches ..."
+    )
     opt_jobs: list[tuple[str, Any]] = [
         (
             "adv_cur",
@@ -1375,6 +1657,28 @@ def _load_live(
             ),
         ),
         (
+            "four_factors",
+            lambda: soft_fetch(
+                f"FourFactors {season}",
+                lambda: _fetch_league_team_four_factors(
+                    season, date_to, use_cache=use_cache
+                ),
+                retries=2,
+                use_cache=False,
+            ),
+        ),
+        (
+            "shot_loc",
+            lambda: soft_fetch(
+                f"ShotLocations {season}",
+                lambda: _fetch_team_shot_locations(
+                    season, date_to, use_cache=use_cache
+                ),
+                retries=2,
+                use_cache=False,
+            ),
+        ),
+        (
             "coach_home",
             lambda: _fetch_coach_name(
                 int(home["id"]), season, use_cache=use_cache
@@ -1406,6 +1710,28 @@ def _load_live(
                     lambda: soft_fetch(
                         f"hustle {fb_season}",
                         lambda: _fetch_team_hustle(
+                            fb_season, None, use_cache=use_cache
+                        ),
+                        retries=2,
+                        use_cache=False,
+                    ),
+                ),
+                (
+                    "four_factors_fb",
+                    lambda: soft_fetch(
+                        f"FourFactors {fb_season}",
+                        lambda: _fetch_league_team_four_factors(
+                            fb_season, None, use_cache=use_cache
+                        ),
+                        retries=2,
+                        use_cache=False,
+                    ),
+                ),
+                (
+                    "shot_loc_fb",
+                    lambda: soft_fetch(
+                        f"ShotLocations {fb_season}",
+                        lambda: _fetch_team_shot_locations(
                             fb_season, None, use_cache=use_cache
                         ),
                         retries=2,
@@ -1480,6 +1806,55 @@ def _load_live(
     _attach_pt_defend(home_t, overall=pt_o, threes=pt_3, rim=pt_r)
     _attach_pt_defend(away_t, overall=pt_o, threes=pt_3, rim=pt_r)
 
+    ff_rows, ff_err = _soft_val("four_factors")
+    if ff_err or not ff_rows:
+        if ff_err:
+            feed_notes.append(f"FourFactors {season}: FAILED — {ff_err}")
+        ff_fb, ff_fb_err = (
+            _soft_val("four_factors_fb") if allow_fallback else (None, None)
+        )
+        if ff_fb:
+            ff_rows = ff_fb
+            feed_notes.append(f"FourFactors: using {fb_season} ({len(ff_rows)} rows)")
+        else:
+            if ff_fb_err:
+                feed_notes.append(f"FourFactors {fb_season}: FAILED — {ff_fb_err}")
+            feed_notes.append("FourFactors: unavailable")
+            ff_rows = None
+    else:
+        feed_notes.append(f"FourFactors {season}: OK ({len(ff_rows)} rows)")
+    _attach_four_factors(home_t, ff_rows)
+    _attach_four_factors(away_t, ff_rows)
+
+    sl_rows, sl_err = _soft_val("shot_loc")
+    if sl_err or not sl_rows:
+        if sl_err:
+            feed_notes.append(f"ShotLocations {season}: FAILED — {sl_err}")
+        sl_fb, sl_fb_err = (
+            _soft_val("shot_loc_fb") if allow_fallback else (None, None)
+        )
+        if sl_fb:
+            sl_rows = sl_fb
+            feed_notes.append(f"ShotLocations: using {fb_season} ({len(sl_rows)} rows)")
+        else:
+            if sl_fb_err:
+                feed_notes.append(f"ShotLocations {fb_season}: FAILED — {sl_fb_err}")
+            feed_notes.append("ShotLocations: unavailable (rim/corner no-op)")
+            sl_rows = None
+    else:
+        feed_notes.append(f"ShotLocations {season}: OK ({len(sl_rows)} rows)")
+    _attach_shot_profile(home_t, sl_rows)
+    _attach_shot_profile(away_t, sl_rows)
+
+    # Team GP from advanced team rows (wave1) for early-season shrink
+    _attach_team_gp_from_advanced(home_t, primary_teams)
+    _attach_team_gp_from_advanced(away_t, primary_teams)
+    if allow_fallback and fallback_team_rows:
+        if home_t.team_gp <= 0:
+            _attach_team_gp_from_advanced(home_t, fallback_team_rows)
+        if away_t.team_gp <= 0:
+            _attach_team_gp_from_advanced(away_t, fallback_team_rows)
+
     home_coach = (
         w3.get("coach_home")
         if not isinstance(w3.get("coach_home"), Exception)
@@ -1512,9 +1887,34 @@ def _load_live(
     _finalize_team_context(home_t, coach_name=str(home_coach or ""))
     _finalize_team_context(away_t, coach_name=str(away_coach or ""))
 
+    # Early-season shrink + DEN altitude (travel applied later in rest.py when dated)
+    from nba_sim.signals import (
+        apply_altitude,
+        apply_early_season_shrink,
+        signal_matchup_notes,
+        travel_miles,
+    )
+
+    for note in apply_early_season_shrink(home_t):
+        feed_notes.append(note)
+    for note in apply_early_season_shrink(away_t):
+        feed_notes.append(note)
+    for note in apply_altitude(home_t, is_home=True):
+        feed_notes.append(note)
+    apply_altitude(away_t, is_home=False)  # no-op unless somehow DEN-only flags
+
+    # Road travel into tip city (home arena) — miles for fatigue when B2B/rest runs
+    miles = travel_miles(away_t.abbreviation, home_t.abbreviation)
+    away_t.travel_miles = miles
+    if miles >= 500:
+        feed_notes.append(
+            f"travel baseline: {away_t.abbreviation}→{home_t.abbreviation} ~{miles:.0f} mi"
+        )
+
     from nba_sim.contextfeats import build_matchup_notes
 
     ctx_notes = build_matchup_notes(home_t, away_t)
+    ctx_lines = list(ctx_notes.lines) + signal_matchup_notes(home_t, away_t)
 
     md = MatchupData(
         season=season,
@@ -1524,7 +1924,7 @@ def _load_live(
         as_of=cutoff.isoformat() if cutoff else None,
         game_date=game_date.isoformat() if game_date else None,
         provenance=provenance,
-        matchup_notes=list(ctx_notes.lines),
+        matchup_notes=ctx_lines,
         feed_notes=feed_notes,
     )
     _write_cache(cache_key, _matchup_to_dict(md))
@@ -1533,9 +1933,9 @@ def _load_live(
         f"{away_t.abbreviation} n={len(away_t.players)} season={season}"
     )
     for line in feed_notes:
-        if "FAILED" in line or "unavailable" in line:
+        if "FAILED" in line or "unavailable" in line or "early-S2D" in line or "altitude" in line:
             _say(f"  feed: {line}")
-    for line in ctx_notes.lines:
+    for line in ctx_lines:
         _say(f"  matchup: {line}")
     for line in provenance.summary_lines():
         _say(f"  prior: {line}")
@@ -1607,6 +2007,20 @@ def _team_from_dict(d: dict[str, Any]) -> TeamSeason:
         pt_dfg_overall=float(d.get("pt_dfg_overall") or 0.0),
         pt_dfg_three=float(d.get("pt_dfg_three") or 0.0),
         pt_dfg_rim=float(d.get("pt_dfg_rim") or 0.0),
+        efg_pct=float(d.get("efg_pct") or 0.0),
+        tov_pct=float(d.get("tov_pct") or 0.0),
+        oreb_pct=float(d.get("oreb_pct") or 0.0),
+        ftr=float(d.get("ftr") or 0.0),
+        opp_efg_pct=float(d.get("opp_efg_pct") or 0.0),
+        opp_tov_pct=float(d.get("opp_tov_pct") or 0.0),
+        opp_oreb_pct=float(d.get("opp_oreb_pct") or 0.0),
+        rim_fga_rate=float(d.get("rim_fga_rate") or 0.0),
+        corner3_rate=float(d.get("corner3_rate") or 0.0),
+        team_gp=float(d.get("team_gp") or 0.0),
+        sos_net=float(d.get("sos_net") or 0.0),
+        travel_miles=float(d.get("travel_miles") or 0.0),
+        altitude_fg3_boost=float(d.get("altitude_fg3_boost") or 0.0),
+        foul_rate=float(d.get("foul_rate") or 0.0),
     )
     return _finalize_team_context(team, coach_name=team.coach_name)
 
@@ -1673,6 +2087,13 @@ def load_fixture(path: Path | None = None) -> MatchupData:
                     season_used=p.prior_season or md.season,
                     reason="fixture",
                 )
+    from nba_sim.signals import apply_altitude, signal_matchup_notes
+
+    apply_altitude(md.home, is_home=True)
+    extra = signal_matchup_notes(md.home, md.away)
+    for line in extra:
+        if line not in md.matchup_notes:
+            md.matchup_notes.append(line)
     return md
 
 
