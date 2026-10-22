@@ -477,6 +477,7 @@ def run_simulations(
         away_win_lo=away_lo,
         away_win_hi=away_hi,
         seed=seed,
+        mean_margin=float(home_scores.mean() - away_scores.mean()),
     )
 
 

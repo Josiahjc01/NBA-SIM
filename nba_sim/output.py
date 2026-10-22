@@ -79,6 +79,9 @@ def format_report(
     )
     lines.append(f"Mean total: {summary.mean_total:.1f}")
     lines.append(
+        f"Mean margin (home−away): {summary.mean_margin:+.1f}"
+    )
+    lines.append(
         f"Score percentiles (p10/p50/p90) — "
         f"{summary.away_abbr}: {summary.away_p10:.0f}/{summary.away_p50:.0f}/{summary.away_p90:.0f}  |  "
         f"{summary.home_abbr}: {summary.home_p10:.0f}/{summary.home_p50:.0f}/{summary.home_p90:.0f}  |  "
@@ -184,6 +187,7 @@ def summary_to_dict(summary: SimSummary, matchup: MatchupData) -> dict[str, Any]
         "ot_rate": summary.ot_rate,
         "seed": summary.seed,
         "mean_total": summary.mean_total,
+        "mean_margin": summary.mean_margin,
         "percentiles": {
             "away": {"p10": summary.away_p10, "p50": summary.away_p50, "p90": summary.away_p90},
             "home": {"p10": summary.home_p10, "p50": summary.home_p50, "p90": summary.home_p90},

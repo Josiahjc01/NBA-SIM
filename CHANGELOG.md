@@ -16,8 +16,11 @@
 
 ## 0.3.x model correctness
 - **Fix inverted DRtg adj** (`opp_DRtg/league`): soft defenses boost offense
+  - Fixture LAC@SAC: Clippers away win% ~36% → ~52% after fix (Kings were wrongly favored via inverted D)
+  - Clippers home: ~50% → ~65%
 - Remove ORtg×FG double-count; B2B uses `fatigue_fg_mult`
 - Early-season blend: last season + preseason + rookie archetypes
+- See `docs/sample-run.md` + investigation notes in the Project store
 
 ## 0.2.x
 - Slate mode, last-season fallback, injuries/lines flags
