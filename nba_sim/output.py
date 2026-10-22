@@ -77,6 +77,12 @@ def format_report(
         f"{summary.home_std:7.1f} {_pct(summary.home_win_pct):>8}"
     )
     lines.append(f"Mean total: {summary.mean_total:.1f}")
+    lines.append(
+        f"Score percentiles (p10/p50/p90) — "
+        f"{summary.away_abbr}: {summary.away_p10:.0f}/{summary.away_p50:.0f}/{summary.away_p90:.0f}  |  "
+        f"{summary.home_abbr}: {summary.home_p10:.0f}/{summary.home_p50:.0f}/{summary.home_p90:.0f}  |  "
+        f"tot: {summary.total_p10:.0f}/{summary.total_p50:.0f}/{summary.total_p90:.0f}"
+    )
     win_sum = summary.home_win_pct + summary.away_win_pct + summary.tie_pct
     lines.append(
         f"Win% check: home {_pct(summary.home_win_pct)} + away {_pct(summary.away_win_pct)}"
@@ -160,6 +166,11 @@ def summary_to_dict(summary: SimSummary, matchup: MatchupData) -> dict[str, Any]
         "tie_pct": summary.tie_pct,
         "ot_rate": summary.ot_rate,
         "mean_total": summary.mean_total,
+        "percentiles": {
+            "away": {"p10": summary.away_p10, "p50": summary.away_p50, "p90": summary.away_p90},
+            "home": {"p10": summary.home_p10, "p50": summary.home_p50, "p90": summary.home_p90},
+            "total": {"p10": summary.total_p10, "p50": summary.total_p50, "p90": summary.total_p90},
+        },
         "away_players": summary.away_players,
         "home_players": summary.home_players,
         "audit": summary.audit,

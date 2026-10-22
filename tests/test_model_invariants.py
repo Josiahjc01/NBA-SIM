@@ -21,6 +21,9 @@ class ModelInvariantTests(unittest.TestCase):
         self.assertLessEqual(s.audit.get("max_player_team_pts_gap", 99), 0.01)
         self.assertAlmostEqual(s.audit.get("mean_team_minutes", 0), 240.0, delta=0.5)
         self.assertIn("ortg_mechanism", s.audit)
+        self.assertLessEqual(s.home_p10, s.home_p50)
+        self.assertLessEqual(s.home_p50, s.home_p90)
+        self.assertLessEqual(s.total_p10, s.total_p90)
 
     def test_ortg_shifts_scoring(self):
         md = load_fixture()

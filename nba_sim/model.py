@@ -79,6 +79,16 @@ class SimSummary:
     audit: dict = field(default_factory=dict)
     mean_total: float = 0.0
     line_probs: LineProbabilities | None = None
+    # Score distribution percentiles (p10/p50/p90) for home, away, total
+    home_p10: float = 0.0
+    home_p50: float = 0.0
+    home_p90: float = 0.0
+    away_p10: float = 0.0
+    away_p50: float = 0.0
+    away_p90: float = 0.0
+    total_p10: float = 0.0
+    total_p50: float = 0.0
+    total_p90: float = 0.0
 
 
 @dataclass
@@ -414,6 +424,10 @@ def run_simulations(
             total=lines.total,
         )
 
+    totals = home_scores + away_scores
+    def _pctile(arr: np.ndarray, q: float) -> float:
+        return float(np.percentile(arr, q))
+
     return SimSummary(
         n=n,
         home_abbr=matchup.home.abbreviation,
@@ -429,8 +443,17 @@ def run_simulations(
         home_players=_aggregate_players(results, "home"),
         away_players=_aggregate_players(results, "away"),
         audit=audit,
-        mean_total=float((home_scores + away_scores).mean()),
+        mean_total=float(totals.mean()),
         line_probs=line_probs,
+        home_p10=_pctile(home_scores, 10),
+        home_p50=_pctile(home_scores, 50),
+        home_p90=_pctile(home_scores, 90),
+        away_p10=_pctile(away_scores, 10),
+        away_p50=_pctile(away_scores, 50),
+        away_p90=_pctile(away_scores, 90),
+        total_p10=_pctile(totals, 10),
+        total_p50=_pctile(totals, 50),
+        total_p90=_pctile(totals, 90),
     )
 
 
