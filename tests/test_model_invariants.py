@@ -7,7 +7,7 @@ import unittest
 
 from nba_sim.cli import main
 from nba_sim.data import load_fixture
-from nba_sim.model import run_simulations
+from nba_sim.model import defensive_fg_adj, run_simulations
 from nba_sim.output import summary_to_dict
 from nba_sim.priors import compute_blend_weights
 
@@ -36,6 +36,13 @@ class ModelInvariantTests(unittest.TestCase):
         md.away.def_rating = 125.0
         soft = run_simulations(md, n=400, seed=7)
         self.assertGreater(soft.home_mean, base.home_mean - 0.25)
+
+    def test_defensive_fg_adj_not_inverted(self):
+        soft = defensive_fg_adj(120.0)  # bad D
+        stingy = defensive_fg_adj(105.0)  # good D
+        self.assertGreater(soft, 1.0)
+        self.assertLess(stingy, 1.0)
+        self.assertGreater(soft, stingy)
 
     def test_json_cli(self):
         rc = main(

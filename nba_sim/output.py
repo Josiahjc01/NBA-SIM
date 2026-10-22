@@ -222,28 +222,32 @@ def format_slate_table(
 ) -> str:
     """Compact slate summary: matchup, avg scores, win%, total, optional lines."""
     lines: list[str] = []
-    lines.append("=" * 88)
+    lines.append("=" * 100)
     lines.append(f"NBA Sim SLATE  |  {slate_date} (US/Eastern day)  |  N={n}/game")
-    lines.append("=" * 88)
+    lines.append("=" * 100)
     hdr = (
         f"{'Away':<4} {'Home':<4} {'A_avg':>6} {'H_avg':>6} "
-        f"{'Tot':>6} {'A_win%':>7} {'H_win%':>7} {'CoverH%':>8} {'Over%':>7}"
+        f"{'Tot':>6} {'A_win%':>7} {'H_win%':>7} {'H_CI95':>13} {'CoverH%':>8} {'Over%':>7}"
     )
     lines.append(hdr)
-    lines.append("-" * 88)
+    lines.append("-" * 100)
     for r in rows:
         cover = (
             f"{100 * r['home_cover']:.1f}" if r.get("home_cover") is not None else "—"
         )
         over = f"{100 * r['over']:.1f}" if r.get("over") is not None else "—"
+        if r.get("home_win_lo") is not None and r.get("home_win_hi") is not None:
+            hci = f"{100 * r['home_win_lo']:.0f}-{100 * r['home_win_hi']:.0f}%"
+        else:
+            hci = "—"
         lines.append(
             f"{r['away']:<4} {r['home']:<4} "
             f"{r['away_mean']:6.1f} {r['home_mean']:6.1f} "
             f"{r['total']:6.1f} "
             f"{100 * r['away_win']:6.1f}% {100 * r['home_win']:6.1f}% "
-            f"{cover:>8} {over:>7}"
+            f"{hci:>13} {cover:>8} {over:>7}"
         )
         if r.get("note"):
             lines.append(f"       {r['note']}")
-    lines.append("=" * 88)
+    lines.append("=" * 100)
     return "\n".join(lines)

@@ -34,6 +34,15 @@ TOV_RATE_CEIL = 0.18
 FG_FLOOR, FG_CEIL = 0.30, 0.72
 FG3_FLOOR, FG3_CEIL = 0.22, 0.45
 FT_FLOOR, FT_CEIL = 0.50, 0.95
+LEAGUE_DEF_RTG = 112.0
+
+
+def defensive_fg_adj(opp_def: float, league_def: float = LEAGUE_DEF_RTG) -> float:
+    """
+    Make% multiplier from opponent DEF_RATING (pts allowed / 100).
+    Higher opp_def → worse defense → adj > 1.
+    """
+    return _clip(max(float(opp_def), 90.0) / float(league_def), 0.94, 1.06)
 
 
 @dataclass
@@ -169,12 +178,8 @@ def _build_context(team: TeamSeason, opp_def: float, league_def: float = 112.0) 
     oreb_w = _safe_norm(oreb_raw * mins)
     dreb_w = _safe_norm(dreb_raw * mins)
 
-    # Opponent defensive adjustment. NBA DEF_RATING = pts allowed / 100
-    # (higher = worse defense). Facing a soft defense must RAISE make%; facing
-    # a stingy defense must LOWER it → adj = opp_drtg / league (NOT inverted).
-    # Historical bug used league/opp, which suppressed offense vs bad D and
-    # inflated it vs good D — flipping Clippers/Kings edges incorrectly.
-    def_adj = _clip(max(opp_def, 90.0) / league_def, 0.94, 1.06)
+    # See defensive_fg_adj(); must NOT use league/opp (inverted historically).
+    def_adj = defensive_fg_adj(opp_def, league_def)
     # Team ORtg is already largely reflected in player FG%/usage — do not
     # multiply make% by ORtg again. Optional fatigue_fg_mult (B2B) still applies.
     fatigue = float(getattr(team, "fatigue_fg_mult", 1.0) or 1.0)
