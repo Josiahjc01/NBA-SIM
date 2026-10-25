@@ -89,7 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="TYPE",
         help=(
             "Regular Season | Playoffs | PlayIn | Pre Season | IST. Default: "
-            "from --date (PlayIn ≈ Apr 11–14; Playoffs ≈ Apr 15–Jun 30; "
+            "from --date (PlayIn ≈ Apr 11–18; Playoffs ≈ Apr 19–Jun 30; "
             "IST/NBA Cup ≈ Nov 21–Dec 17). IST uses RS boards + Cup regime."
         ),
     )

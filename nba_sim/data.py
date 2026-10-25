@@ -46,6 +46,10 @@ FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 CACHE_TTL_SECONDS = 6 * 60 * 60  # shorter so live S2D stays fresh
 # Matchup aggregate cache schema — bump when TeamSeason / blend inputs change.
 MATCHUP_CACHE_SCHEMA = "blendv10"
+# Season types that accept LeagueDash DateTo (pre-tip cutoff). PlayIn must be
+# included — omitting it silently drops DateTo → tip-inclusive "latest" boards
+# (audit Critical C2). Pre Season stays full-slate (short window).
+_DATE_TO_SEASON_TYPES = ("Regular Season", "Playoffs", "PlayIn")
 
 # When True, suppress informational prints (warnings for hard failures still raise).
 _QUIET = False
@@ -273,8 +277,8 @@ def _fetch_league_player_stats(
                 "season_type_all_star": season_type,
             }
         )
-        # DateTo only for regular season (preseason is short; use full pre slate).
-        if date_to and season_type in ("Regular Season", "Playoffs"):
+        # DateTo for RS / Playoffs / PlayIn (preseason is short; use full pre slate).
+        if date_to and season_type in _DATE_TO_SEASON_TYPES:
             kwargs["date_to_nullable"] = date_to
         ep = leaguedashplayerstats.LeagueDashPlayerStats(**kwargs)
         return ep.get_normalized_dict()["LeagueDashPlayerStats"]
@@ -303,7 +307,7 @@ def _fetch_league_team_stats(
                 "season_type_all_star": season_type,
             }
         )
-        if date_to and season_type in ("Regular Season", "Playoffs"):
+        if date_to and season_type in _DATE_TO_SEASON_TYPES:
             kwargs["date_to_nullable"] = date_to
         ep = leaguedashteamstats.LeagueDashTeamStats(**kwargs)
         return ep.get_normalized_dict()["LeagueDashTeamStats"]
@@ -333,7 +337,7 @@ def _fetch_league_player_advanced(
                 "season_type_all_star": season_type,
             }
         )
-        if date_to and season_type in ("Regular Season", "Playoffs"):
+        if date_to and season_type in _DATE_TO_SEASON_TYPES:
             kwargs["date_to_nullable"] = date_to
         ep = leaguedashplayerstats.LeagueDashPlayerStats(**kwargs)
         return ep.get_normalized_dict()["LeagueDashPlayerStats"]
@@ -415,7 +419,7 @@ def _fetch_team_hustle(
                 "season_type_all_star": season_type,
             }
         )
-        if date_to and season_type in ("Regular Season", "Playoffs"):
+        if date_to and season_type in _DATE_TO_SEASON_TYPES:
             kwargs["date_to_nullable"] = date_to
         ep = leaguehustlestatsteam.LeagueHustleStatsTeam(**kwargs)
         data = ep.get_normalized_dict()
