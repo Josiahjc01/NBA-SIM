@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.0.3
+Anti-leak patch: PlayIn LeagueDash boards now apply tip−1 `DateTo` (same allowlist as Regular Season / Playoffs). Fixes audit Critical C2 — prior core fetches silently dropped DateTo on PlayIn, allowing tip-inclusive “latest” boards. CLI `--season-type` help aligned with Apr 11–18 PlayIn / Apr 19+ Playoffs. Tag: `v1.0.3` (PR #9 + this bump).
+
 ## 1.0.2
 Live-run hotfix (Blazers @ Kings / `--date` path):
 

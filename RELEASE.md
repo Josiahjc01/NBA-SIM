@@ -1,3 +1,24 @@
+# NBA-SIM 1.0.3
+
+Anti-leak patch on 1.0.2: PlayIn boards honor tip−1 `DateTo` (audit C2 / PR #9). Tag: `v1.0.3`.
+
+## Install / run
+
+```bash
+pip install -e .
+python -m nba_sim doctor
+python -m nba_sim --home POR --away SAC --date 2026-10-23 --n 2000 --seed 42
+# Optional live props / richer ML:
+export ODDS_API_KEY=your_key   # or THE_ODDS_API_KEY
+```
+
+## Patch notes
+
+- **PlayIn DateTo:** core LeagueDash player/team/advanced/hustle use `_DATE_TO_SEASON_TYPES` including PlayIn (match enrich).
+- **CLI help:** PlayIn ≈ Apr 11–18; Playoffs ≈ Apr 19–Jun 30.
+
+Prior tags: `v1.0.2` (live-run), `v1.0.1` (CI), `v1.0.0` (feature freeze).
+
 # NBA-SIM 1.0.2
 
 Live-run hotfix on 1.0.1: real Top 5 market edges, `--date` hang fix, drop ESPN core injuries 404. Tag: `v1.0.2`.
