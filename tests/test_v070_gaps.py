@@ -162,7 +162,7 @@ def test_calibrated_defaults_and_market_report():
 def test_version_blendv10():
     from nba_sim import __version__
     from nba_sim.data import MATCHUP_CACHE_SCHEMA
-    assert __version__ == "1.0.2"
+    assert __version__ == "1.0.3"
     assert MATCHUP_CACHE_SCHEMA == "blendv10"
 
 
