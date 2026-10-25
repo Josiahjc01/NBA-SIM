@@ -241,3 +241,22 @@ def test_residual_defense_mult_clips_soft_d_stack():
     tough = residual_defense_mult(0.97, 0.975, 0.97, 0.98, 0.98, 0.97, 0.98)
     assert tough >= 0.98
     assert residual_defense_mult(1.0, 1.0) == 1.0
+
+
+def test_playin_boards_accept_date_to():
+    """Anti-leak C2: PlayIn must apply DateTo like RS/Playoffs (not drop it)."""
+    import inspect
+
+    from nba_sim import data as data_mod
+
+    assert "PlayIn" in data_mod._DATE_TO_SEASON_TYPES
+    # Fetch helpers must gate on the shared allowlist (not RS|Playoffs only).
+    for name in (
+        "_fetch_league_player_stats",
+        "_fetch_league_team_stats",
+        "_fetch_league_player_advanced",
+        "_fetch_team_hustle",
+    ):
+        src = inspect.getsource(getattr(data_mod, name))
+        assert "_DATE_TO_SEASON_TYPES" in src
+        assert 'season_type in ("Regular Season", "Playoffs")' not in src
